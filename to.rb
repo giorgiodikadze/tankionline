@@ -66,10 +66,11 @@ module TankiOnline
       while wm && (img = _screenshot_chunky) && _check_main_page_popup?(img) do
         gift = _img_get_gift img
         unless gift.empty?
-          _screenshot_save user, img
+          _screenshot_save user, img, 'gift'
           gifts += gift
         else
-          @logger.debug "No gift found - do not store screenshot"
+          @logger.debug "No gift found"
+          _screenshot_save user, img, 'nongift'
         end
         key_stroke 'enter'
         _sleep 1.5 # to change timestamp also
@@ -128,7 +129,8 @@ module TankiOnline
     end
 
     def i img
-      [_img_get_xp(img), _img_get_cry(img)]
+      _img_get_gift img
+      #[_img_get_xp(img), _img_get_cry(img)]
       #_img_status_read_prepare(img).save('st.png')
       #_img_status_read_prepare(_img_get_status img, :both)
       #puts _find_subimages(img, @subimages_gift).inspect
@@ -220,8 +222,8 @@ module TankiOnline
       file = File.expand_path(file)
     end
 
-    def _screenshot_save user, img = nil
-      fn = _screenshot_file(user)
+    def _screenshot_save user, img = nil, subfolder = ""
+      fn = _screenshot_file(user, true, subfolder)
       _img_get_popup(img).save("#{fn}.png") if img
       #@br.screenshot.save "#{fn}.png"
       @logger.warn "Screenshot '#{fn}' is saved"
@@ -474,7 +476,22 @@ module TankiOnline
     end
 
     def _img_get_gift img
-      _find_subimages img, @subimages_gift
+      gifts = {}
+      data = _find_subimages img, @subimages_gift, true
+      # handle to be sure that the order is a proper one
+      data.each_slice(2) do |p|
+        c = p[0]
+        a = p[1]
+        a.each do |t|
+          k = t[0]
+          gifts[k] = c
+        end
+      end
+      out = []
+      gifts.sort.each do |m| 
+        out << m[1]
+      end
+      out
     end
 
     def _crypt_salt user
@@ -506,7 +523,7 @@ t = TankiOnline::CollectGifts.new :server_num => 50, :server_locale => 'en', :wi
 # do more than once to prevent random errors
 for i in 1..5
   puts "Step #{i}"
-  #t.collect_all "logins"
+  t.collect_all "logins"
 end
 
 if false
