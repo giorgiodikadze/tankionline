@@ -249,7 +249,15 @@ module TankiOnline
       list.each do |f|
         fn = File.join(dir, f)
         img = ChunkyPNG::Image.from_file(fn)
-        img.crop!(2, 3, img.width - 2 - 1, img.height - 3 - 2)
+        img_s = _img_get_status img, :status
+        img_c = _img_get_status img, :cry
+        img_s.crop!(1, 0, img_s.width - 2, img_s.height)
+        img_c.crop!(1, 0, img_c.width - 2, img_c.height)
+        img_both = ChunkyPNG::Image.new(img_s.width + img_c.width, [img_s.height, img_c.height].max)
+        img_both.compose!(img_s, 0, 0)
+        img_both.compose!(img_c, img_s.width - 1, 0)
+        img = img_both
+        img.crop!(2, 3, img.width - 2 - 1, img.height - 3 - 3)
         images << img
       end
       w = 0
@@ -523,12 +531,14 @@ end
 t = TankiOnline::CollectGifts.new :server_num => 50, :server_locale => 'en', :win_resize => [1024 + 16, 768], :empty_screenshot => false
 
 # do more than once to prevent random errors
-for i in 1..5
-  puts "Step #{i}"
-  t.collect_all "logins"
+if ARGV.length > 0 && File.exists?(ARGV[0]) && !File.directory?(ARGV[0])
+
+for i in 1..10
+  #puts "Step #{i}"
+  t.collect_all ARGV[0]
 end
 
-if false
+elsif false
   if File.directory? ARGV[0]
     list = Dir.entries(ARGV[0]).select {|entry| !File.directory? File.join(ARGV[0], entry) and !(entry =='.' || entry == '..') and File.extname(entry) == '.png'}
     list.each do |f|

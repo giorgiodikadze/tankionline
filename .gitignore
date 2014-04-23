@@ -35,3 +35,7 @@ build/
 
 # own
 screenshots/
+chromedriver.exe
+logins
+_.png
+*.log
