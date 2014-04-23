@@ -248,7 +248,9 @@ module TankiOnline
       images = []
       list.each do |f|
         fn = File.join(dir, f)
-        images << ChunkyPNG::Image.from_file(fn)
+        img = ChunkyPNG::Image.from_file(fn)
+        img.crop!(2, 3, img.width - 2 - 1, img.height - 3 - 2)
+        images << img
       end
       w = 0
       h = 0
