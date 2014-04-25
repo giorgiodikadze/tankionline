@@ -129,9 +129,11 @@ module TankiOnline
     end
 
     def i img
-      _img_get_gift img
+      #_img_get_gift img
       #[_img_get_xp(img), _img_get_cry(img)]
-      #_img_status_read_prepare(img).save('st.png')
+      r = [_img_get_xp(img), _img_get_cry(img)]
+      _img_status_read_prepare(img).save('st.png')
+      r
       #_img_status_read_prepare(_img_get_status img, :both)
       #puts _find_subimages(img, @subimages_gift).inspect
       #puts _find_subimages(img, @subimages_rank).inspect
@@ -538,23 +540,26 @@ for i in 1..10
   t.collect_all ARGV[0]
 end
 
-elsif false
-  if File.directory? ARGV[0]
-    list = Dir.entries(ARGV[0]).select {|entry| !File.directory? File.join(ARGV[0], entry) and !(entry =='.' || entry == '..') and File.extname(entry) == '.png'}
+elsif ARGV.length > 1 && ARGV[0] == 'i'
+  fp = ARGV[1]
+  if File.directory? fp
+    list = Dir.entries(fp).select {|entry| !File.directory? File.join(fp, entry) and !(entry =='.' || entry == '..') and File.extname(entry) == '.png'}
     list.each do |f|
-      fn = File.join(ARGV[0], f)
+      fn = File.join(fp, f)
       image = ChunkyPNG::Image.from_file(fn)
       #ud = /^(\S+)_(\d{10,14})/.match(f)
       #puts ud.inspect
       puts "#{fn}: #{t.i(image).inspect}"
     end
     #puts list.inspect
-  elsif File.file? ARGV[0]
-    image = ChunkyPNG::Image.from_file(ARGV[0])
-      puts "#{ARGV[0]}: #{t.i(image).inspect}"
+  elsif File.file? fp
+    image = ChunkyPNG::Image.from_file(fp)
+      puts "#{fp}: #{t.i(image).inspect}"
   else
     puts "Unknown parameter"
   end
+else
+  puts ARGV[0]
 end
 
 t.finish
