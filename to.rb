@@ -12,6 +12,7 @@ module TankiOnline
 
   class CollectGifts
     URL_MASK = "http://tankionline.com/battle-%s%d.html"
+    URL_MASK_BR = "http://tankionline.com.br/battle-%s%d.html"
 
     def initialize params={}
       # parse parameters
@@ -47,9 +48,9 @@ module TankiOnline
       @br.close
     end
 
-    def collect user, password
+    def collect user, password, params = {}
       @logger.warn "Collect for user: #{user}"
-      _goto_login
+      _goto_login params
       @logger.debug "Wait login page"
       wl = _wait_login
       return unless wl
@@ -112,13 +113,16 @@ module TankiOnline
         values = line.strip.split(':')
         user = values[0].strip
         p = values[1].strip
+        params = {}
+        params[:email] = values[2].strip if values.length > 2
+        params[:locale] = values[3].strip if values.length > 3
         if @logins.fetch(user, nil)
           @logger.warn "Skip '#{user}' as already handled"
           next
         end
         puts "User: #{user} (#{current_num})"
         current_num += 1
-        collect user, p
+        collect user, p, params
       end
     end
 
@@ -146,9 +150,19 @@ module TankiOnline
       sleep t * (1 - d / 2 + d * Random.rand(1))
     end
 
+    def _get_url params
+      locale = params.fetch(:locale, @serverLocale)
+      case locale
+      when 'br'
+        URL_MASK_BR % ['', 1]
+      else
+        @url
+      end
+    end
+
     # broser to go to login page
-    def _goto_login
-      @br.goto @url
+    def _goto_login params
+      @br.goto _get_url(params)
       @br.wait
       _sleep 1 # wait to ensure Flash has changed the page
     end
