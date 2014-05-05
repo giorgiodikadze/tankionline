@@ -169,7 +169,7 @@ module TankiOnline
 
     def _wait_login
       # login page has white pixels in the middle
-      _try_wait(120, 1) {
+      _try_wait(180, 1) {
          _img_check(_screenshot_chunky, 34, 66, 34, 66) { |c|
            c == ChunkyPNG::Color::WHITE
          }
@@ -267,6 +267,7 @@ module TankiOnline
         img = ChunkyPNG::Image.from_file(fn)
         img_s = _img_get_status img, :status
         img_c = _img_get_status img, :cry
+        next if img_s.nil? or img_c.nil? or img_s.width < 5 or img_c.width < 5 or img_s.height < 9 or img_c.height < 9
         img_s.crop!(1, 0, img_s.width - 2, img_s.height)
         img_c.crop!(1, 0, img_c.width - 2, img_c.height)
         img_both = ChunkyPNG::Image.new(img_s.width + img_c.width, [img_s.height, img_c.height].max)
