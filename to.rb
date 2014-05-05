@@ -78,10 +78,12 @@ module TankiOnline
         @logger.debug "Popup handled"
       end
 
+      st = false # status is parsed
       unless img.nil?
         _screenshot_status_save(user, img)
         xp = _img_get_xp(img)
         cry = _img_get_cry(img)
+        st = true unless (xp.nil?  && cry.nil?)
         date = DateTime.now.strftime('%Y%m%d%H%M%S')
         filename = File.expand_path(File.join(File.dirname(__FILE__), 'to_collect.log'))
         File.open(filename, 'a') do |file|
@@ -97,9 +99,9 @@ module TankiOnline
 
       @logger.debug "Logout"
       _logout
-      @logger.debug "Collect - finished (#{wl}, #{wm})"
+      @logger.debug "Collect - finished (#{wl}, #{wm}, #{st})"
 
-      @logins[user] = true if (wm && wl)
+      @logins[user] = true if (wm && wl && st)
     end
 
     # collect user list from file
