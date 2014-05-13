@@ -13,6 +13,7 @@ module TankiOnline
   class CollectGifts
     URL_MASK = "http://tankionline.com/battle-%s%d.html"
     URL_MASK_BR = "http://tankionline.com.br/battle-%s%d.html"
+    URL_MASK_CN = "http://3dtank.com/battle-%s%d.html"
 
     def initialize params={}
       # parse parameters
@@ -157,6 +158,8 @@ module TankiOnline
       case locale
       when 'br'
         URL_MASK_BR % ['', 1]
+      when 'cn'
+        URL_MASK_CN % ['', 1]
       else
         @url
       end
