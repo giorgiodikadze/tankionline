@@ -41,7 +41,7 @@ module TankiOnline
       @logger.info "Started"
       @logins = {}
       @subimages_gift = _load_subimages "gift", ["pro", "cry", "dcc", "exp", "da", "dd", "mine", "nitro", "aid"]
-      @subimages_char = _load_subimages "chr", ["sep", "0", "1", "2", "3", "4", "5", "6", "7", "8", "9"]
+      @subimages_char = _load_subimages "chr", ["sep", "colon", "0", "1", "2", "3", "4", "5", "6", "7", "8", "9"]
     end
 
     def finish
@@ -477,6 +477,7 @@ module TankiOnline
       data.each_slice(2) do |p|
         c = p[0]
         c = '/' if c == 'sep'
+        c = ':' if c == 'colon'
         a = p[1]
         a.each do |t|
           k = t[0]
@@ -492,7 +493,8 @@ module TankiOnline
         end
         #@logger.debug data.inspect
       end
-      chrs.sort.map { |k, v| v.to_s }.join.split('/')[0]
+      #puts chrs.sort.map { |k, v| v.to_s }.join
+      chrs.sort.map { |k, v| v.to_s }.join.split(/[\/:]/)[0]
     end
 
     def _img_get_xp img
