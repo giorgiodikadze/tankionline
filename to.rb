@@ -9,6 +9,7 @@ module TankiOnline
   require 'oily_png'
   require 'auto_click'
   require 'openssl'
+  require 'rautomation'
 
   class << self
     def _load_subimages prefix, list
@@ -58,6 +59,7 @@ module TankiOnline
     WAIT_LOGOUT_ESC = 1
     WAIT_LOGOUT_ENTER = 3
 
+    attr_reader :user
     attr_reader :status
 
     def initialize params={}
@@ -71,6 +73,10 @@ module TankiOnline
 
       # start browser
       @br = Watir::Browser.new :chrome, :switches => %w[--ignore-certificate-errors --disable-popup-blocking --disable-translate]
+      title = "TO" + (0...50).map { ('a'..'z').to_a[rand(26)] }.join
+      @br.execute_script 'document.title="#{title}";'
+      @winr = RAutomation::Window.new(:title => title)
+      puts @winr.active?
       @win = @br.window
       if @winResize.is_a?(Array) and @winResize.size == 2
         @win.resize_to @winResize[0], @winResize[1]
@@ -90,7 +96,8 @@ module TankiOnline
     end
 
     def finish
-      @br.close
+      @br.close if @status != :closed
+      @user = nil
 
       _change_status :closed
     end
@@ -102,11 +109,14 @@ module TankiOnline
     def collect user, password, params = {}
       raise "Not idle" unless idle?
 
+      _clear_user_data
       @user = user
       @userPassword = password
       @userParams = params
 
       _change_status :login
+
+      @logger.info "Start to do user: #{user}"
     end
 
     def step
@@ -211,11 +221,7 @@ module TankiOnline
         # do nothing
       when :abort
         # clear all data
-        @userGifts = nil
-        @userXP = nil
-        @userCry = nil
-        @userPassword = nil
-        @user = nil
+        _clear_user_data
         next_status = :idle
       else
         raise StandardError, "Unknown status!"
@@ -228,12 +234,23 @@ module TankiOnline
       _combine_statuses
     end
 
+    def user_done?
+      idle? && !@user.nil? && !@userPassword.nil?
+    end
+
     private
 
     #
     def _change_status st
       @logger.debug "Next status: '#{st}'"
       @status = st
+    end
+
+    def _clear_user_data
+      @userGifts = nil
+      @userXP = nil
+      @userCry = nil
+      @userPassword = nil
     end
 
     # 
@@ -247,7 +264,11 @@ module TankiOnline
 
     # bring window up
     def _window_up
-      @br.screenshot.png
+      #@br.screenshot.png
+      #@win.use
+      #@win.maximize
+      #@win.resize_to(@winSize.width, @winSize.height)
+      #@win.move_to(@winPos.x, @winPos.y)
     end
 
     # get screenshot in chunky-png format
@@ -652,21 +673,28 @@ module TankiOnline
       # parse parameters
       @brParams = params
       @maxBrowsers = params.fetch(:max_browsers, 3)
+      @logName = params.fetch(:log_name, "log/to_full.log")
 
       # start browser
       @brs = []
-      @maxBrowsers
+      @maxBrowsers.times do
+        params[:win_move] = [0, 0] unless params.has_key? :win_move
+        @brs << Browser.new(params)
+        params[:win_move][0] += 20
+      end
 
       # other params
-      @crypter = OpenSSL::Cipher.new 'AES-128-CBC'
+      #@crypter = OpenSSL::Cipher.new 'AES-128-CBC'
       @logger = Logger.new @logName
       @logger.info "Started"
       @logins = {}
     end
 
     def finish
-      _combine_statuses
-      @br.close
+      @brs[0].combine_statuses
+      @brs.each do |br|
+        br.finish
+      end
     end
 
     def collect user, password, params = {}
@@ -743,9 +771,37 @@ module TankiOnline
           @logger.warn "Skip '#{user}' as already handled"
           next
         end
-        puts "User: #{user} (#{current_num})"
-        current_num += 1
-        collect user, p, params
+        #puts "User: #{user} (#{current_num})"
+        @logins[user] = [p, params, 0]
+      end
+      @logger.debug "Users to load: #{@logins.keys.inspect}"
+
+      while !@logins.empty? do
+        @brs.each do |br|
+          if br.idle? && !@logins.empty?
+            possible = @logins.select { |k, v| v[2] == 0 }
+            unless possible.keys.empty?
+              u = possible.keys[0]
+              p = @logins[u][0]
+              params = @logins[u][1]
+              puts "User: #{u} (#{@logins.length})"
+              @logins[u][2] = 1
+              br.collect u, p, params
+            end
+          end
+          br.step
+          if br.idle?
+            u = br.user
+            if br.user_done?
+              @logins.delete(u)
+            elsif !u.nil?
+              # new try
+              p = @logins[u][0]
+              params = @logins[u][1]
+              br.collect u, p, params
+            end
+          end
+        end
       end
     end
 
@@ -792,17 +848,7 @@ module TankiOnline
   end
 end
 
-t = TankiOnline::Browser.new :server_num => 50, :server_locale => 'en', :win_resize => [1024 + 16, 768], :win_move => [20, 0], :empty_screenshot => false
-t.collect '', ''
-
-while !t.idle? do
-  t.step
-end
-
-t.finish
-
-=begin
-t = TankiOnline::CollectGifts.new :server_num => 50, :server_locale => 'en', :win_resize => [1024 + 16, 768], :empty_screenshot => false
+t = TankiOnline::CollectGifts.new :server_num => 50, :server_locale => 'en', :win_resize => [1024 + 16, 768], :max_browsers => 2, :empty_screenshot => false
 
 # do more than once to prevent random errors
 if ARGV.length > 0 && File.exists?(ARGV[0]) && !File.directory?(ARGV[0])
@@ -835,4 +881,3 @@ else
 end
 
 t.finish
-=end
