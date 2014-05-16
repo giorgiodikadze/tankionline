@@ -10,18 +10,63 @@ module TankiOnline
   require 'auto_click'
   require 'openssl'
 
-  class CollectGifts
-    URL_MASK = "http://tankionline.com/battle-%s%d.html"
-    URL_MASK_BR = "http://tankionline.com.br/battle-%s%d.html"
-    URL_MASK_CN = "http://3dtank.com/battle-%s%d.html"
+  class << self
+    def _load_subimages prefix, list
+      out = {}
+      # 
+      list.each do |item|
+        if item.is_a? Hash
+          #puts item.to_a.inspect
+          name = item.to_a[0][0]
+          char = item.to_a[0][1]
+        else
+          name = item
+          char = item
+        end
+        file = File.expand_path(File.join(File.dirname(__FILE__), 'res', "#{prefix}_#{name}.png"))
+        out[char] = ChunkyPNG::Image.from_file(file) #if File.file?(file)
+=begin
+        list2 = Dir.entries(fp).select {|entry| !File.directory? File.join(fp, entry) and !(entry =='.' || entry == '..') and File.extname(entry) == '.png'}
+    list.each do |f|
+      fn = File.join(fp, f)
+      image = ChunkyPNG::Image.from_file(fn)
+      #ud = /^(\S+)_(\d{10,14})/.match(f)
+      #puts ud.inspect
+      puts "#{fn}: #{t.i(image).inspect}"
+    end
+=end
+      end
+      out
+    end
+  end
+
+  class Browser
+    URL_MASK = {
+      :default => "http://tankionline.com/battle-%s%d.html",
+      :br => "http://tankionline.com.br/battle-%s%d.html",
+      :cn => "http://3dtank.com/battle-%s%d.html"
+    }
+    SUBIMAGES = {
+      :gift => TankiOnline::_load_subimages("gift", ["pro", "cry", "dcc", "exp", "da", "dd", "mine", "nitro", "aid"]),
+      :char => TankiOnline::_load_subimages("chr", [{"sep" => "/"}, {"colon" => ":"}, "0", "1", "2", "3", "4", "5", "6", "7", "8", "9"])
+    }
+    WAIT_LOGIN_PAGE_STARTED = 1
+    WAIT_LOGIN_PAGE_LOADED = 60*3
+    WAIT_LOGIN_DIALOG_SWITCHED = 1.4
+    WAIT_MAIN_PAGE_LOADED = 150
+    WAIT_POPUP_CLOSE = 1.5
+    WAIT_LOGOUT_ESC = 1
+    WAIT_LOGOUT_ENTER = 3
+
+    attr_reader :status
 
     def initialize params={}
       # parse parameters
       @serverNum = params.fetch(:server_num, 40)
       @serverLocale = params.fetch(:server_locale, "en")
-      @logName = params.fetch(:log_name, "to_full.log")
-      @url = URL_MASK % [@serverLocale, @serverNum]
+      @logName = params.fetch(:log_name, "log/to_browser_#{DateTime.now.strftime('%Y%m%d%H%M%S%L')}.log")
       @winResize = params.fetch(:win_resize, nil)
+      @winMove = params.fetch(:win_move, nil)
       @emptyScreenshot = params.fetch(:empty_screenshot, false)
 
       # start browser
@@ -29,6 +74,7 @@ module TankiOnline
       @win = @br.window
       if @winResize.is_a?(Array) and @winResize.size == 2
         @win.resize_to @winResize[0], @winResize[1]
+        @win.move_to(@winMove[0], @winMove[1]) if @winMove.is_a?(Array) and @winMove.size == 2
       else
         @win.maximize
       end
@@ -36,149 +82,216 @@ module TankiOnline
       @winPos = @win.position
 
       # other params
-      @crypter = OpenSSL::Cipher.new 'AES-128-CBC'
       @logger = Logger.new @logName
       @logger.info "Started"
-      @logins = {}
-      @subimages_gift = _load_subimages "gift", ["pro", "cry", "dcc", "exp", "da", "dd", "mine", "nitro", "aid"]
-      @subimages_char = _load_subimages "chr", ["sep", "colon", "0", "1", "2", "3", "4", "5", "6", "7", "8", "9"]
+
+      # set initial status
+      _change_status :idle
     end
 
     def finish
-      _combine_statuses
       @br.close
+
+      _change_status :closed
+    end
+
+    def idle?
+      status == :idle
     end
 
     def collect user, password, params = {}
-      @logger.warn "Collect for user: #{user}"
-      _goto_login params
-      @logger.debug "Wait login page"
-      wl = _wait_login
-      return unless wl
-      @logger.debug "Switch to existing login"
-      _switch_existing_login
-      @logger.debug "Enter user data"
-      _enter_login_data user, password
-      @logger.debug "Wait main page ready"
-      wm = _wait_main_page
+      raise "Not idle" unless idle?
 
-      @logger.debug "Do popup screenshots"
-      gifts = []
-      img = nil
-      while wm && (img = _screenshot_chunky) && _check_main_page_popup?(img) do
-        gift = _img_get_gift img
-        unless gift.empty?
-          _screenshot_save user, img, 'gift'
-          gifts += gift
+      @user = user
+      @userPassword = password
+      @userParams = params
+
+      _change_status :login
+    end
+
+    def step
+      #@logger.debug "Current status: #{@status}"
+      next_status = nil
+
+      case @status
+      when :login
+        # browser to go to login page
+        @br.goto _get_login_url(@userParams)
+        next_status = :login_page_wait
+      when :login_page_wait
+        # wait page will be ready
+        @br.wait
+        next_status = :login_page_wait2
+      when :login_page_wait2
+        # prepare to wait more (to ensure Flash has changed the page)
+        _wait_init WAIT_LOGIN_PAGE_STARTED
+        next_status = :login_page_wait3
+      when :login_page_wait3
+        # wait more to ensure Flash has changed the page
+        next_status = :login_dialog_wait if _wait_done?
+      when :login_dialog_wait
+        # wait login dialog to appear
+        _wait_init WAIT_LOGIN_PAGE_LOADED
+        next_status = :login_dialog_wait2
+      when :login_dialog_wait2
+        r = _img_check(_screenshot_chunky, 34, 66, 34, 66) { |c|
+           c == ChunkyPNG::Color::WHITE
+        }
+        if r
+          next_status = :login_switch
+        elsif _wait_done?
+          next_status = :abort
+        end
+      when :login_switch
+        _window_up
+        _switch_existing_login
+        next_status = :login_switch_wait
+      when :login_switch_wait
+        # prepare to wait some time (to ensure login dialog will be show)
+        _wait_init WAIT_LOGIN_DIALOG_SWITCHED
+        next_status = :login_switch_wait2
+      when :login_switch_wait2
+        # wait some time to ensure login dialog will be show
+        next_status = :login_enter_data if _wait_done?
+      when :login_enter_data
+        _window_up
+        _enter_login_data @user, @userPassword
+        next_status = :main_page_wait
+      when :main_page_wait
+        _wait_init WAIT_MAIN_PAGE_LOADED
+        next_status = :main_page_wait2
+      when :main_page_wait2
+        # login page has white
+        r = _img_check(_screenshot_chunky, 75, 100, 34, 66) { |c|
+          c == ChunkyPNG::Color::WHITE || c == ChunkyPNG::Color.rgb(127, 127, 127)
+        }
+        if r
+          next_status = :main_page_ready
+        elsif _wait_done?
+          next_status = :abort
+        end
+      when :main_page_ready
+        # click popups
+        r = _handle_popup
+        if r
+          next_status = :main_page_next_popup
         else
-          @logger.debug "No gift found"
-          _screenshot_save user, img, 'nongift'
+          next_status = :main_page_no_popups
         end
+      when :main_page_next_popup
+        _wait_init WAIT_POPUP_CLOSE
+        next_status = :main_page_next_popup_wait
+      when :main_page_next_popup_wait
+        next_status = :main_page_ready if _wait_done?
+      when :main_page_no_popups
+        _parse_status _handle_popup_last_img
+        next_status = :logout
+      when :logout
+        _window_up
+        key_stroke 'esc'
+        next_status = :logout_wait_esc
+      when :logout_wait_esc
+        _wait_init WAIT_LOGOUT_ESC
+        next_status = :logout_wait_esc2
+      when :logout_wait_esc2
+        next_status = :logout_enter if _wait_done?
+      when :logout_enter
+        _window_up
         key_stroke 'enter'
-        _sleep 1.5 # to change timestamp also
-        @logger.debug "Popup handled"
+        next_status = :logout_wait_enter
+      when :logout_wait_enter
+        _wait_init WAIT_LOGOUT_ENTER
+        next_status = :logout_wait_enter2
+      when :logout_wait_enter2
+        next_status = :logout_wait if _wait_done?
+      when :logout_wait
+        @br.wait
+        next_status = :idle
+      when :idle
+        # do nothing
+      when :abort
+        # clear all data
+        @userGifts = nil
+        @userXP = nil
+        @userCry = nil
+        @userPassword = nil
+        @user = nil
+        next_status = :idle
+      else
+        raise StandardError, "Unknown status!"
       end
-
-      st = false # status is parsed
-      unless img.nil?
-        _screenshot_status_save(user, img)
-        xp = _img_get_xp(img)
-        cry = _img_get_cry(img)
-        st = true unless (xp.nil?  && cry.nil?)
-        date = DateTime.now.strftime('%Y%m%d%H%M%S')
-        filename = File.expand_path(File.join(File.dirname(__FILE__), 'to_collect.log'))
-        File.open(filename, 'a') do |file|
-          file.puts "#{user}, #{date}, #{xp}, #{cry}, #{gifts.join(':').upcase}"
-        end
-        filename = File.expand_path(File.join(File.dirname(__FILE__), 'to_gifts.log'))
-        File.open(filename, 'a') do |file|
-          file.puts "#{user}, #{date}, #{xp}, #{cry}, #{gifts.join(':').upcase}"
-        end unless gifts.empty?
-        puts "#{user}, #{date}, xp #{xp}, cry #{cry}, gifts #{gifts.join(':').upcase}"
-      end
-      _screenshot_save(user) if (@emptyScreenshot && !@logins.fetch(user, nil))
-
-      @logger.debug "Logout"
-      _logout
-      @logger.debug "Collect - finished (#{wl}, #{wm}, #{st})"
-
-      @logins[user] = true if (wm && wl && st)
+      
+      _change_status(next_status) unless next_status.nil?
     end
 
-    # collect user list from file
-    def collect_all fn
-      @logger.warn "Collect users from file: #{fn}"
-      current_num = 1
-      File.readlines(fn).shuffle.each do |line|
-        line.strip!
-        next if line.empty?
-        next if ((line[0] == '#') || (line[0] == ';'))
-        values = line.strip.split(':')
-        user = values[0].strip
-        p = values[1].strip
-        params = {}
-        params[:email] = values[2].strip if values.length > 2
-        params[:locale] = values[3].strip if values.length > 3
-        if @logins.fetch(user, nil)
-          @logger.warn "Skip '#{user}' as already handled"
-          next
-        end
-        puts "User: #{user} (#{current_num})"
-        current_num += 1
-        collect user, p, params
-      end
-    end
-
-    def en
-      p = _encrypt_pwd 'abc', '123456'
-      puts p
-      puts _decrypt_pwd 'abc', p
-    end
-
-    def i img
-      #_img_get_gift img
-      #[_img_get_xp(img), _img_get_cry(img)]
-      r = [_img_get_xp(img), _img_get_cry(img)]
-      _img_status_read_prepare(img).save('st.png')
-      r
-      #_img_status_read_prepare(_img_get_status img, :both)
-      #puts _find_subimages(img, @subimages_gift).inspect
-      #puts _find_subimages(img, @subimages_rank).inspect
+    def combine_statuses
+      _combine_statuses
     end
 
     private
 
-    # sleep with some randomness
-    def _sleep t, d = 0.2
-      sleep t * (1 - d / 2 + d * Random.rand(1))
+    #
+    def _change_status st
+      @logger.debug "Next status: '#{st}'"
+      @status = st
     end
 
-    def _get_url params
+    # 
+    def _wait_init timeWait
+      @wait = [Time.now, timeWait]
+    end
+
+    def _wait_done?
+      Time.now - @wait[0] > @wait[1]
+    end
+
+    # bring window up
+    def _window_up
+      @br.screenshot.png
+    end
+
+    # get screenshot in chunky-png format
+    def _screenshot_chunky
+      ChunkyPNG::Image.from_blob @br.screenshot.png
+    end
+
+
+    def _screenshot_file user, show_date = true, subfolder = "", folder = "screenshots"
+      date = DateTime.now.strftime('%Y%m%d%H%M%S')
+      file = folder
+      file += "/#{subfolder}" if subfolder.length > 0
+      file += "/#{user}"
+      file += "_#{date}" if show_date
+      file = File.expand_path(file)
+    end
+
+    def _screenshot_save user, img = nil, subfolder = ""
+      fn = _screenshot_file(user, true, subfolder)
+      _img_get_popup(img).save("#{fn}.png") if img
+      #@br.screenshot.save "#{fn}.png"
+      @logger.warn "Screenshot '#{fn}' is saved"
+    end
+
+    def _screenshot_status_save user, img
+      fn = _screenshot_file(user, false, "status")
+      _img_get_status(img).save("#{fn}.png")
+      #w = img.width - 500
+      #w = img.width / 2 if w < img.width / 2
+      #img.crop(0, 0, w, 32).save("#{fn}.png")
+      @logger.warn "Screenshot status '#{fn}' is saved"
+    end
+
+    # get the proper url to the login page
+    def _get_login_url params
       locale = params.fetch(:locale, @serverLocale)
       case locale
       when 'br'
-        URL_MASK_BR % ['', 1]
+        URL_MASK[:br] % ['', 1]
       when 'cn'
-        URL_MASK_CN % ['', 1]
+        URL_MASK[:cn] % ['', 1]
       else
-        @url
+        URL_MASK[:default] % [@serverLocale, @serverNum]
       end
-    end
-
-    # broser to go to login page
-    def _goto_login params
-      @br.goto _get_url(params)
-      @br.wait
-      _sleep 1 # wait to ensure Flash has changed the page
-    end
-
-    def _wait_login
-      # login page has white pixels in the middle
-      _try_wait(180, 1) {
-         _img_check(_screenshot_chunky, 34, 66, 34, 66) { |c|
-           c == ChunkyPNG::Color::WHITE
-         }
-      }
     end
 
     def _switch_existing_login
@@ -190,7 +303,6 @@ module TankiOnline
         mouse_move x, y
         left_click
       }
-      _sleep 1.4 # wait some time to ensure login dialog will be show
     end
 
     def _enter_login_data user, password
@@ -225,42 +337,60 @@ module TankiOnline
       !r
     end
 
-    def _logout
-      # logout
-      key_stroke 'esc'
-      _sleep 1
-      key_stroke 'enter'
-      _sleep 3
-      @br.wait
+    # sleep with some randomness
+    def _sleep t, d = 0.2
+      sleep t * (1 - d / 2 + d * Random.rand(1))
     end
 
-    def _screenshot_file user, show_date = true, subfolder = "", folder = "screenshots"
-      date = DateTime.now.strftime('%Y%m%d%H%M%S')
-      file = folder
-      file += "/#{subfolder}" if subfolder.length > 0
-      file += "/#{user}"
-      file += "_#{date}" if show_date
-      file = File.expand_path(file)
+    def _handle_popup
+      gifts = []
+      img = _screenshot_chunky
+      @lastHandledPopupImg = img
+      if _check_main_page_popup?(img)
+        gift = _img_get_gift img
+        unless gift.empty?
+          _screenshot_save @user, img, 'gift'
+          gifts += gift
+        else
+          @logger.debug "No gift found"
+          _screenshot_save @user, img, 'nongift'
+        end
+        key_stroke 'enter'
+        _sleep 1.5 # to change timestamp also
+        @logger.debug "Popup handled"
+        @userGifts = gifts
+        true
+      else
+        false
+      end
     end
 
-    def _screenshot_save user, img = nil, subfolder = ""
-      fn = _screenshot_file(user, true, subfolder)
-      _img_get_popup(img).save("#{fn}.png") if img
-      #@br.screenshot.save "#{fn}.png"
-      @logger.warn "Screenshot '#{fn}' is saved"
+    def _handle_popup_last_img
+      @lastHandledPopupImg
     end
 
-    def _screenshot_status_save user, img
-      fn = _screenshot_file(user, false, "status")
-      _img_get_status(img).save("#{fn}.png")
-      #w = img.width - 500
-      #w = img.width / 2 if w < img.width / 2
-      #img.crop(0, 0, w, 32).save("#{fn}.png")
-      @logger.warn "Screenshot status '#{fn}' is saved"
-    end
-
-    def _screenshot_chunky
-      ChunkyPNG::Image.from_blob @br.screenshot.png
+    def _parse_status img
+      st = false # status is parsed
+      unless img.nil?
+        _screenshot_status_save(@user, img)
+        xp = _img_get_xp(img)
+        @userXP = xp
+        cry = _img_get_cry(img)
+        @userCry = cry
+        st = true unless (xp.nil?  && cry.nil?)
+        gifts = @userGifts
+        gifts = [] if gifts.nil?
+        date = DateTime.now.strftime('%Y%m%d%H%M%S')
+        filename = File.expand_path(File.join(File.dirname(__FILE__), 'to_collect.log'))
+        File.open(filename, 'a') do |file|
+          file.puts "#{@user}, #{date}, #{xp}, #{cry}, #{gifts.join(':').upcase}"
+        end
+        filename = File.expand_path(File.join(File.dirname(__FILE__), 'to_gifts.log'))
+        File.open(filename, 'a') do |file|
+          file.puts "#{@user}, #{date}, #{xp}, #{cry}, #{gifts.join(':').upcase}"
+        end unless gifts.empty?
+        puts "#{@user}, #{date}, xp #{xp}, cry #{cry}, gifts #{gifts.join(':').upcase}"
+      end
     end
 
     def _combine_statuses
@@ -440,16 +570,6 @@ module TankiOnline
       r
     end
 
-    def _load_subimages prefix, list
-      out = {}
-      # 
-      list.each do |item|
-        file = File.expand_path(File.join(File.dirname(__FILE__), 'res', "#{prefix}_#{item}.png"))
-        out[item] = ChunkyPNG::Image.from_file(file)
-      end
-      out
-    end
-
     def _find_subimages img, subimages, with_coords = false, single = :single_same_subimage
       out = []
       keys = []
@@ -472,12 +592,10 @@ module TankiOnline
 
     def _recognize_text img
       chrs = {}
-      data = _find_subimages img, @subimages_char, true, nil
+      data = _find_subimages img, SUBIMAGES[:char], true, nil
       #puts data.inspect
       data.each_slice(2) do |p|
         c = p[0]
-        c = '/' if c == 'sep'
-        c = ':' if c == 'colon'
         a = p[1]
         a.each do |t|
           k = t[0]
@@ -511,7 +629,7 @@ module TankiOnline
 
     def _img_get_gift img
       gifts = {}
-      data = _find_subimages img, @subimages_gift, true
+      data = _find_subimages img, SUBIMAGES[:gift], true
       # handle to be sure that the order is a proper one
       data.each_slice(2) do |p|
         c = p[0]
@@ -527,6 +645,128 @@ module TankiOnline
       end
       out
     end
+  end
+
+  class CollectGifts
+    def initialize params={}
+      # parse parameters
+      @brParams = params
+      @maxBrowsers = params.fetch(:max_browsers, 3)
+
+      # start browser
+      @brs = []
+      @maxBrowsers
+
+      # other params
+      @crypter = OpenSSL::Cipher.new 'AES-128-CBC'
+      @logger = Logger.new @logName
+      @logger.info "Started"
+      @logins = {}
+    end
+
+    def finish
+      _combine_statuses
+      @br.close
+    end
+
+    def collect user, password, params = {}
+      @logger.warn "Collect for user: #{user}"
+      _goto_login params
+      @logger.debug "Wait login page"
+      wl = _wait_login
+      return unless wl
+      @logger.debug "Switch to existing login"
+      _switch_existing_login
+      @logger.debug "Enter user data"
+      _enter_login_data user, password
+      @logger.debug "Wait main page ready"
+      wm = _wait_main_page
+
+      @logger.debug "Do popup screenshots"
+      gifts = []
+      img = nil
+      while wm && (img = _screenshot_chunky) && _check_main_page_popup?(img) do
+        gift = _img_get_gift img
+        unless gift.empty?
+          _screenshot_save user, img, 'gift'
+          gifts += gift
+        else
+          @logger.debug "No gift found"
+          _screenshot_save user, img, 'nongift'
+        end
+        key_stroke 'enter'
+        _sleep 1.5 # to change timestamp also
+        @logger.debug "Popup handled"
+      end
+
+      st = false # status is parsed
+      unless img.nil?
+        _screenshot_status_save(user, img)
+        xp = _img_get_xp(img)
+        cry = _img_get_cry(img)
+        st = true unless (xp.nil?  && cry.nil?)
+        date = DateTime.now.strftime('%Y%m%d%H%M%S')
+        filename = File.expand_path(File.join(File.dirname(__FILE__), 'to_collect.log'))
+        File.open(filename, 'a') do |file|
+          file.puts "#{user}, #{date}, #{xp}, #{cry}, #{gifts.join(':').upcase}"
+        end
+        filename = File.expand_path(File.join(File.dirname(__FILE__), 'to_gifts.log'))
+        File.open(filename, 'a') do |file|
+          file.puts "#{user}, #{date}, #{xp}, #{cry}, #{gifts.join(':').upcase}"
+        end unless gifts.empty?
+        puts "#{user}, #{date}, xp #{xp}, cry #{cry}, gifts #{gifts.join(':').upcase}"
+      end
+      _screenshot_save(user) if (@emptyScreenshot && !@logins.fetch(user, nil))
+
+      @logger.debug "Logout"
+      _logout
+      @logger.debug "Collect - finished (#{wl}, #{wm}, #{st})"
+
+      @logins[user] = true if (wm && wl && st)
+    end
+
+    # collect user list from file
+    def collect_all fn
+      @logger.warn "Collect users from file: #{fn}"
+      current_num = 1
+      File.readlines(fn).shuffle.each do |line|
+        line.strip!
+        next if line.empty?
+        next if ((line[0] == '#') || (line[0] == ';'))
+        values = line.strip.split(':')
+        user = values[0].strip
+        p = values[1].strip
+        params = {}
+        params[:email] = values[2].strip if values.length > 2
+        params[:locale] = values[3].strip if values.length > 3
+        if @logins.fetch(user, nil)
+          @logger.warn "Skip '#{user}' as already handled"
+          next
+        end
+        puts "User: #{user} (#{current_num})"
+        current_num += 1
+        collect user, p, params
+      end
+    end
+
+    def en
+      p = _encrypt_pwd 'abc', '123456'
+      puts p
+      puts _decrypt_pwd 'abc', p
+    end
+
+    def i img
+      #_img_get_gift img
+      #[_img_get_xp(img), _img_get_cry(img)]
+      r = [_img_get_xp(img), _img_get_cry(img)]
+      _img_status_read_prepare(img).save('st.png')
+      r
+      #_img_status_read_prepare(_img_get_status img, :both)
+      #puts _find_subimages(img, SUBIMAGES[:gift]).inspect
+      #puts _find_subimages(img, @@subimages_rank).inspect
+    end
+
+    private
 
     def _crypt_salt user
       "#{user}#{user}#{user}#{user}#{user}#{user}#{user}#{user}"[0..7]
@@ -552,6 +792,16 @@ module TankiOnline
   end
 end
 
+t = TankiOnline::Browser.new :server_num => 50, :server_locale => 'en', :win_resize => [1024 + 16, 768], :win_move => [20, 0], :empty_screenshot => false
+t.collect '', ''
+
+while !t.idle? do
+  t.step
+end
+
+t.finish
+
+=begin
 t = TankiOnline::CollectGifts.new :server_num => 50, :server_locale => 'en', :win_resize => [1024 + 16, 768], :empty_screenshot => false
 
 # do more than once to prevent random errors
@@ -585,3 +835,4 @@ else
 end
 
 t.finish
+=end
