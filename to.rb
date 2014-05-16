@@ -2,12 +2,23 @@
 # http://tankionline.com#friend=FASLPW7G4wuCP0EMI16PG5aQ5ycMmYZqV5l0CS59R5prh9JLcdqcrf5XczAS0xfy
 # http://tankionline.com/battle-en50.html#friend=FASLPW7G4wuCP0EMI16PG5aQ5ycMmYZqV5l0CS59R5prh9JLcdqcrf5XczAS0xfy
 
+require 'ffi'
+module User32
+  extend FFI::Library
+  ffi_lib 'user32'
+  attach_function :SetCapture,
+    :SetCapture, [:uint], :uint
+  attach_function :ReleaseCapture,
+    :ReleaseCapture, [:uint], :bool
+  attach_function :SendMessage,
+    :SendMessageA, [:uint, :uint, :uint, :uint], :uint
+end
+
 module TankiOnline
   require 'logger'
   require 'watir-webdriver'
   require 'chunky_png_subimage'
   require 'oily_png'
-  require 'auto_click'
   require 'openssl'
   require 'rautomation'
 
@@ -73,10 +84,13 @@ module TankiOnline
 
       # start browser
       @br = Watir::Browser.new :chrome, :switches => %w[--ignore-certificate-errors --disable-popup-blocking --disable-translate]
-      title = "TO" + (0...50).map { ('a'..'z').to_a[rand(26)] }.join
-      @br.execute_script 'document.title="#{title}";'
-      @winr = RAutomation::Window.new(:title => title)
-      puts @winr.active?
+      title = "TO" + (0...15).map { ('a'..'z').to_a[rand(26)] }.join
+      @br.execute_script "document.title=\"#{title}\";"
+      while (@winr = RAutomation::Window.new(:title => /#{Regexp.escape(title)}/)) && !@winr.exists?
+        _sleep 0.25
+      end
+      #puts @winr.exists?
+      raise "Cannot find window" unless @winr.exists?
       @win = @br.window
       if @winResize.is_a?(Array) and @winResize.size == 2
         @win.resize_to @winResize[0], @winResize[1]
@@ -198,7 +212,7 @@ module TankiOnline
         next_status = :logout
       when :logout
         _window_up
-        key_stroke 'esc'
+        _send_keys :escape
         next_status = :logout_wait_esc
       when :logout_wait_esc
         _wait_init WAIT_LOGOUT_ESC
@@ -207,7 +221,7 @@ module TankiOnline
         next_status = :logout_enter if _wait_done?
       when :logout_enter
         _window_up
-        key_stroke 'enter'
+        _send_keys :enter
         next_status = :logout_wait_enter
       when :logout_wait_enter
         _wait_init WAIT_LOGOUT_ENTER
@@ -269,13 +283,27 @@ module TankiOnline
       #@win.maximize
       #@win.resize_to(@winSize.width, @winSize.height)
       #@win.move_to(@winPos.x, @winPos.y)
+      #@winr.activate
+      #_sleep 0.25
+    end
+
+    def _click_mouse x, y
+      hwnd = @winr.hwnd
+      User32.SetCapture(hwnd)
+      dw = (x + y * 0x10000).to_i
+      User32.SendMessage(hwnd, 0x0201, 1, dw);
+      User32.SendMessage(hwnd, 0x0202, 1, dw);
+      User32.ReleaseCapture(hwnd)
+    end
+
+    def _send_keys *args
+      @br.send_keys *args
     end
 
     # get screenshot in chunky-png format
     def _screenshot_chunky
       ChunkyPNG::Image.from_blob @br.screenshot.png
     end
-
 
     def _screenshot_file user, show_date = true, subfolder = "", folder = "screenshots"
       date = DateTime.now.strftime('%Y%m%d%H%M%S')
@@ -316,27 +344,29 @@ module TankiOnline
     end
 
     def _switch_existing_login
-      x = @winSize.width / 2 + @winPos.x
-      y2 = @winSize.height * 1 / 2 + @winPos.y
-      y1 = @winSize.height * 1 / 3 + @winPos.y
+      x = @winSize.width / 2# + @winPos.x
+      y2 = @winSize.height * 1 / 2# + @winPos.y
+      y1 = @winSize.height * 1 / 3# + @winPos.y
       y2.step(y1, -8) { |y|
         #puts "#{x}, #{y}"
-        mouse_move x, y
-        left_click
+        _click_mouse x, y
+        #mouse_move x, y
+        #left_click
       }
     end
 
     def _enter_login_data user, password
-      x = @winSize.width / 2 + @winPos.x
-      y = @winSize.height * 1 / 3 + @winPos.y
-      mouse_move x, y
-      left_click
+      x = @winSize.width / 2# + @winPos.x
+      y = @winSize.height * 1 / 3# + @winPos.y
+      #mouse_move x, y
+      #left_click
+      _click_mouse x, y
       sleep 0.1
-      key_stroke 'tab'
-      type user.to_s
-      key_stroke 'tab'
-      type password.to_s
-      key_stroke 'enter'
+      _send_keys :tab
+      _send_keys user.to_s
+      _send_keys :tab
+      _send_keys password.to_s
+      _send_keys :enter
     end
 
     def _wait_main_page
@@ -376,8 +406,8 @@ module TankiOnline
           @logger.debug "No gift found"
           _screenshot_save @user, img, 'nongift'
         end
-        key_stroke 'enter'
-        _sleep 1.5 # to change timestamp also
+        _send_keys :enter
+        #_sleep 1.5 # to change timestamp also
         @logger.debug "Popup handled"
         @userGifts = gifts
         true
@@ -848,7 +878,7 @@ module TankiOnline
   end
 end
 
-t = TankiOnline::CollectGifts.new :server_num => 50, :server_locale => 'en', :win_resize => [1024 + 16, 768], :max_browsers => 2, :empty_screenshot => false
+t = TankiOnline::CollectGifts.new :server_num => 50, :server_locale => 'en', :win_resize => [1024 + 16, 768], :max_browsers => 4, :empty_screenshot => false
 
 # do more than once to prevent random errors
 if ARGV.length > 0 && File.exists?(ARGV[0]) && !File.directory?(ARGV[0])
