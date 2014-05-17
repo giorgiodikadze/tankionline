@@ -786,7 +786,6 @@ module TankiOnline
     # collect user list from file
     def collect_all fn
       @logger.warn "Collect users from file: #{fn}"
-      current_num = 1
       File.readlines(fn).shuffle.each do |line|
         line.strip!
         next if line.empty?
@@ -833,6 +832,7 @@ module TankiOnline
           end
         end
       end
+      @logger.warn "Collect users - done"
     end
 
     def en
@@ -878,12 +878,12 @@ module TankiOnline
   end
 end
 
-t = TankiOnline::CollectGifts.new :server_num => 50, :server_locale => 'en', :win_resize => [1024 + 16, 768], :max_browsers => 4, :empty_screenshot => false
+t = TankiOnline::CollectGifts.new :server_num => 50, :server_locale => 'en', :win_resize => [1024 + 16, 768], :max_browsers => 2, :empty_screenshot => false
 
 # do more than once to prevent random errors
 if ARGV.length > 0 && File.exists?(ARGV[0]) && !File.directory?(ARGV[0])
 
-for i in 1..10
+for i in 1..1
   #puts "Step #{i}"
   t.collect_all ARGV[0]
 end
