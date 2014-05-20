@@ -409,7 +409,7 @@ module TankiOnline
         _send_keys :enter
         #_sleep 1.5 # to change timestamp also
         @logger.debug "Popup handled"
-        @userGifts = gifts
+        @userGifts = gifts unless gifts.empty?
         true
       else
         false
@@ -710,7 +710,7 @@ module TankiOnline
       @maxBrowsers.times do
         params[:win_move] = [0, 0] unless params.has_key? :win_move
         @brs << Browser.new(params)
-        params[:win_move][0] += 20
+        params[:win_move][0] += 1050
       end
 
       # other params
