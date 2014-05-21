@@ -65,6 +65,8 @@ module TankiOnline
             end
           end
 
+          res_d[:any][gift] += 1
+
           # update db
           db[user][date] = { :hp => hp, :cry => cry, :gift => gift }
           db_last[user] = { :date => date, :hp => hp, :cry => cry, :gift => gift }
