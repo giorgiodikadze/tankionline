@@ -83,7 +83,7 @@ module TankiOnline
       @emptyScreenshot = params.fetch(:empty_screenshot, false)
 
       # start browser
-      @br = Watir::Browser.new :chrome, :switches => %w[--ignore-certificate-errors --disable-popup-blocking --disable-translate]
+      @br = Watir::Browser.new :chrome, :switches => %w[--disable-popup-blocking --disable-translate --test-type]
       title = "TO" + (0...15).map { ('a'..'z').to_a[rand(26)] }.join
       @br.execute_script "document.title=\"#{title}\";"
       while (@winr = RAutomation::Window.new(:title => /#{Regexp.escape(title)}/)) && !@winr.exists?
@@ -144,8 +144,7 @@ module TankiOnline
         next_status = :login_page_wait
       when :login_page_wait
         # wait page will be ready
-        @br.wait
-        next_status = :login_page_wait2
+        next_status = :login_page_wait2 if _browser_ready?
       when :login_page_wait2
         # prepare to wait more (to ensure Flash has changed the page)
         _wait_init WAIT_LOGIN_PAGE_STARTED
@@ -229,8 +228,7 @@ module TankiOnline
       when :logout_wait_enter2
         next_status = :logout_wait if _wait_done?
       when :logout_wait
-        @br.wait
-        next_status = :idle
+        next_status = :idle if _browser_ready?
       when :idle
         # do nothing
       when :abort
@@ -276,6 +274,10 @@ module TankiOnline
       Time.now - @wait[0] > @wait[1]
     end
 
+    def _browser_ready?
+      @br.ready_state == "complete"
+    end
+
     # bring window up
     def _window_up
       #@br.screenshot.png
@@ -316,9 +318,14 @@ module TankiOnline
 
     def _screenshot_save user, img = nil, subfolder = ""
       fn = _screenshot_file(user, true, subfolder)
-      _img_get_popup(img).save("#{fn}.png") if img
+      if img
+        popup = _img_get_popup(img)
+        popup.save("#{fn}.png") if popup
+        @logger.warn "Screenshot '#{fn}' is saved (#{popup.nil?})"
+      else
+        @logger.warn "Screenshot '#{fn}' is NOT saved"
+      end
       #@br.screenshot.save "#{fn}.png"
-      @logger.warn "Screenshot '#{fn}' is saved"
     end
 
     def _screenshot_status_save user, img
@@ -572,11 +579,18 @@ module TankiOnline
         yb += 1
       end
       xa = xc - (xb - xc)
-      @logger.debug "Popup #{xa},#{ya},#{xb},#{yb}"
+      @logger.debug "Popup #{xa},#{ya},#{xb},#{yb} (img #{w}x#{h})"
       #d = 5
       #ya -= d - 1
       #yb += d
-      img.crop(xa, ya, xb - xa,  yb - ya)
+      xw = xb - xa
+      yh = yb - ya
+      if xa >= 0 && xa < w && ya >= 0 && ya < h && xa + xw > 0 && xa + xw < w && ya + yh > 0 && ya + yh < h
+        img.crop(xa, ya, xw,  yh)
+      else
+        @logger.debug "Popup #{xa},#{ya},#{xb},#{yb} - does not fit to original image"
+        nil
+      end
     end
 
     def _img_check img, wfa, wfb, hfa, hfb, &blk
@@ -708,9 +722,9 @@ module TankiOnline
       # start browser
       @brs = []
       @maxBrowsers.times do
-        params[:win_move] = [0, 0] unless params.has_key? :win_move
+        params[:win_move] = [-768, -10] unless params.has_key? :win_move
         @brs << Browser.new(params)
-        params[:win_move][0] += 1050
+        params[:win_move][0] += 1044
       end
 
       # other params
@@ -878,7 +892,7 @@ module TankiOnline
   end
 end
 
-t = TankiOnline::CollectGifts.new :server_num => 50, :server_locale => 'en', :win_resize => [1024 + 16, 768], :max_browsers => 2, :empty_screenshot => false
+t = TankiOnline::CollectGifts.new :server_num => 50, :server_locale => 'en', :win_resize => [1024 + 16, 768], :max_browsers => 3, :empty_screenshot => false
 
 # do more than once to prevent random errors
 if ARGV.length > 0 && File.exists?(ARGV[0]) && !File.directory?(ARGV[0])
