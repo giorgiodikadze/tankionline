@@ -376,15 +376,6 @@ module TankiOnline
       _send_keys :enter
     end
 
-    def _wait_main_page
-      # login page has white
-      _try_wait(150, 1) {
-         _img_check(_screenshot_chunky, 75, 100, 34, 66) { |c|
-           c == ChunkyPNG::Color::WHITE || c == ChunkyPNG::Color.rgb(127, 127, 127)
-         }
-      }
-    end
-
     # possible notifications
     def _check_main_page_popup? img
       # check is any popup shown on the main page?
@@ -416,7 +407,10 @@ module TankiOnline
         _send_keys :enter
         #_sleep 1.5 # to change timestamp also
         @logger.debug "Popup handled"
-        @userGifts = gifts unless gifts.empty?
+        unless gifts.empty?
+          @userGifts = [] unless @userGifts.is_a?(Array)
+          @userGifts += gifts 
+        end
         true
       else
         false
