@@ -390,11 +390,14 @@ module TankiOnline
       #left_click
       _click_mouse x, y
       sleep 0.1
+      _send_keys :tab, user.to_s, :tab, password.to_s, :enter
+=begin
       _send_keys :tab
       _send_keys user.to_s
       _send_keys :tab
       _send_keys password.to_s
       _send_keys :enter
+=end
     end
 
     # possible notifications
