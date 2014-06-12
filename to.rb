@@ -741,65 +741,7 @@ module TankiOnline
       end
     end
 
-    def collect user, password, params = {}
-      @logger.warn "Collect for user: #{user}"
-      _goto_login params
-      @logger.debug "Wait login page"
-      wl = _wait_login
-      return unless wl
-      @logger.debug "Switch to existing login"
-      _switch_existing_login
-      @logger.debug "Enter user data"
-      _enter_login_data user, password
-      @logger.debug "Wait main page ready"
-      wm = _wait_main_page
-
-      @logger.debug "Do popup screenshots"
-      gifts = []
-      img = nil
-      while wm && (img = _screenshot_chunky) && _check_main_page_popup?(img) do
-        gift = _img_get_gift img
-        unless gift.empty?
-          _screenshot_save user, img, 'gift'
-          gifts += gift
-        else
-          @logger.debug "No gift found"
-          _screenshot_save user, img, 'nongift'
-        end
-        key_stroke 'enter'
-        _sleep 1.5 # to change timestamp also
-        @logger.debug "Popup handled"
-      end
-
-      st = false # status is parsed
-      unless img.nil?
-        _screenshot_status_save(user, img)
-        xp = _img_get_xp(img)
-        cry = _img_get_cry(img)
-        st = true unless (xp.nil?  && cry.nil?)
-        date = DateTime.now.strftime('%Y%m%d%H%M%S')
-        filename = File.expand_path(File.join(File.dirname(__FILE__), 'to_collect.log'))
-        File.open(filename, 'a') do |file|
-          file.puts "#{user}, #{date}, #{xp}, #{cry}, #{gifts.join(':').upcase}"
-        end
-        filename = File.expand_path(File.join(File.dirname(__FILE__), 'to_gifts.log'))
-        File.open(filename, 'a') do |file|
-          file.puts "#{user}, #{date}, #{xp}, #{cry}, #{gifts.join(':').upcase}"
-        end unless gifts.empty?
-        puts "#{user}, #{date}, xp #{xp}, cry #{cry}, gifts #{gifts.join(':').upcase}"
-      end
-      _screenshot_save(user) if (@emptyScreenshot && !@logins.fetch(user, nil))
-
-      @logger.debug "Logout"
-      _logout
-      @logger.debug "Collect - finished (#{wl}, #{wm}, #{st})"
-
-      @logins[user] = true if (wm && wl && st)
-    end
-
-    # collect user list from file
-    def collect_all fn
-      @logger.warn "Collect users from file: #{fn}"
+    def load_users fn
       File.readlines(fn).shuffle.each do |line|
         line.strip!
         next if line.empty?
@@ -818,6 +760,13 @@ module TankiOnline
         @logins[user] = [p, params, 0]
       end
       @logger.debug "Users to load: #{@logins.keys.inspect}"
+      @logins
+    end
+
+    # collect user list from file
+    def collect_all fn
+      @logger.warn "Collect users from file: #{fn}"
+      load_users fn
 
       while !@logins.empty? do
         @brs.each do |br|
