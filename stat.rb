@@ -12,6 +12,8 @@ module TankiOnline
       res = Hash.new { |hash, key| hash[key] = 0 }
       res_c = Hash.new { |hash, key| hash[key] = 0 }
       res_d = Hash.new { |hash, key| hash[key] = Hash.new { |h2, k2| h2[k2] = 0 } }
+      res_wd = Hash.new { |hash, key| hash[key] = Hash.new { |h2, k2| h2[k2] = 0 } }
+      res_sup = Hash.new { |hash, key| hash[key] = 0 }
       fn = 'to_gifts.log'
       File.readlines(fn).each do |line|
         line.strip!
@@ -23,6 +25,7 @@ module TankiOnline
         hp = values[2].strip.to_i
         cry = values[3].strip.to_i
         gift = values[4].strip
+        gift_orig = gift
         if !gift.empty? && (hp >= 1500 || db.has_key?(user)) && gift != 'EXP'
           # add to stat
           gift = _gift(gift)
@@ -45,27 +48,40 @@ module TankiOnline
           l24 = _less_than_24h? date, dprev
           m24 = _more_than_24h? date, dprev
           u24 = !l24 && !m24
+          wd = date.cwday
 
           #puts "%s %s/%s %s %s %s" % [user, date, dprev, hp, cry, gift] if u24
           l = "#{dv ? (db_last[user][:gift] == :dcc ? 'D' : (db_last[user][:gift] == :cry ? 'C' : (db_last[user][:gift] == :pro ? 'P' : (db_last[user][:gift] == :exp ? 'E' : '.')))) : '?'}"
-          m = "#{dv ? 'V' : '.'}#{ds ? 'S' : '.'}#{l24 ? 'L' : (m24 ? 'M' : 'U')}#{l}-#{gift}"
+          t = "#{l24 ? 'L' : (m24 ? 'M' : 'U')}"
+          m = "#{dv ? 'V' : '.'}#{ds ? 'S' : '.'}#{t}#{l}-#{gift}"
           res[m] += 1 # if l == '.'
 
           if dv && !ds
-            case db_last[user][:gift]
+            last_gift = db_last[user][:gift]
+            case last_gift
             when :exp, :pro
               res_c[gift] += 1 if m24
-              res_d[db_last[user][:gift]][gift] += 1 if l24 # another counter in case if less
+              res_wd[wd][gift] += 1 if m24
+              res_d[last_gift][gift] += 1 if l24 # another counter in case if less
             when :dcc
               res_d[:dcc][gift] += 1 # another counter
+              #res_d["dcc#{t}"][gift] += 1 # another counter
             when :cry, :sup
               res_c[gift] += 1
+              #res_c["#{gift}#{wd}".to_sym] += 1
+              res_wd[wd][gift] += 1
             else
               raise "Error"
             end
           end
 
           res_d[:any][gift] += 1
+          #res_d[:any]["#{gift}#{wd}".to_sym] += 1
+          if hp >= 3700 && gift == :sup
+            _gift_sup(gift_orig).each { |g|
+               res_sup[g] += 1
+            }
+          end
 
           # update db
           db[user][date] = { :hp => hp, :cry => cry, :gift => gift }
@@ -90,6 +106,18 @@ module TankiOnline
           puts "#{k} = #{'%5d' % v} (#{'%6.3f' % (v.to_f / suma * 100)} of #{suma})" 
         }
       }
+=begin
+      res_wd.each_pair { |ka, va| 
+        puts "After #{ka}"
+        suma = va[:cry] + va[:exp] + va[:pro] + va[:sup] + va[:dcc]
+        va.sort.each { |m|
+          k = m[0]
+          v = m[1]
+          puts "#{k} = #{'%5d' % v} (#{'%6.3f' % (v.to_f / suma * 100)} of #{suma})" 
+        }
+      }
+=end
+      puts res_sup.inspect
 
       # go 
     end
@@ -132,6 +160,16 @@ module TankiOnline
       else
         out = :sup
       end
+      out
+    end
+
+    def _gift_sup gift
+      out = []
+      gifts = gift.split(':')
+      gifts.each { |g|
+        out << g.strip
+        out << "#{g.strip}#{gifts.length}"
+      }
       out
     end
 
