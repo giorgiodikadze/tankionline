@@ -21,6 +21,7 @@ module TankiOnline
   require 'oily_png'
   require 'openssl'
   require 'rautomation'
+  require 'thread'
 
   class << self
     def _load_subimages prefix, list
@@ -70,6 +71,12 @@ module TankiOnline
     WAIT_LOGOUT_ESC = 1
     WAIT_LOGOUT_ENTER = 3
 
+    #
+    @@mutexScreenshot = Mutex.new
+    @@mutexFile = Mutex.new
+    @@mutexMouse = Mutex.new
+
+    #
     attr_reader :user
     attr_reader :status
 
@@ -250,6 +257,13 @@ module TankiOnline
       idle? && !@user.nil? && !@userPassword.nil?
     end
 
+    def user_clear
+      if idle? and !@user.nil?
+        _clear_user_data
+        @user = nil
+      end
+    end
+
     private
 
     #
@@ -260,6 +274,7 @@ module TankiOnline
 
     def _clear_user_data
       @userGifts = nil
+      @userGiftsDate = nil
       @userXP = nil
       @userCry = nil
       @userPassword = nil
@@ -291,11 +306,13 @@ module TankiOnline
 
     def _click_mouse x, y
       hwnd = @winr.hwnd
-      User32.SetCapture(hwnd)
       dw = (x + y * 0x10000).to_i
-      User32.SendMessage(hwnd, 0x0201, 1, dw);
-      User32.SendMessage(hwnd, 0x0202, 1, dw);
-      User32.ReleaseCapture(hwnd)
+      @@mutexMouse.synchronize do
+        User32.SetCapture(hwnd)
+        User32.SendMessage(hwnd, 0x0201, 1, dw);
+        User32.SendMessage(hwnd, 0x0202, 1, dw);
+        User32.ReleaseCapture(hwnd)
+      end
     end
 
     def _send_keys *args
@@ -304,7 +321,11 @@ module TankiOnline
 
     # get screenshot in chunky-png format
     def _screenshot_chunky
-      ChunkyPNG::Image.from_blob @br.screenshot.png
+      png = nil
+      @@mutexScreenshot.synchronize do
+        png = @br.screenshot.png
+      end
+      ChunkyPNG::Image.from_blob png
     end
 
     def _screenshot_file user, show_date = true, subfolder = "", folder = "screenshots"
@@ -392,6 +413,7 @@ module TankiOnline
     end
 
     def _handle_popup
+      @userGiftsDate ||= DateTime.now.strftime('%Y%m%d%H%M%S')
       gifts = []
       img = _screenshot_chunky
       @lastHandledPopupImg = img
@@ -432,15 +454,18 @@ module TankiOnline
         st = true unless (xp.nil?  && cry.nil?)
         gifts = @userGifts
         gifts = [] if gifts.nil?
-        date = DateTime.now.strftime('%Y%m%d%H%M%S')
-        filename = File.expand_path(File.join(File.dirname(__FILE__), 'to_collect.log'))
-        File.open(filename, 'a') do |file|
-          file.puts "#{@user}, #{date}, #{xp}, #{cry}, #{gifts.join(':').upcase}"
+        date = @userGiftsDate
+        date = DateTime.now.strftime('%Y%m%d%H%M%S') if date.nil?
+        @@mutexFile.synchronize do
+          filename = File.expand_path(File.join(File.dirname(__FILE__), 'to_collect.log'))
+          File.open(filename, 'a') do |file|
+            file.puts "#{@user}, #{date}, #{xp}, #{cry}, #{gifts.join(':').upcase}"
+          end
+          filename = File.expand_path(File.join(File.dirname(__FILE__), 'to_gifts.log'))
+          File.open(filename, 'a') do |file|
+            file.puts "#{@user}, #{date}, #{xp}, #{cry}, #{gifts.join(':').upcase}"
+          end unless gifts.empty?
         end
-        filename = File.expand_path(File.join(File.dirname(__FILE__), 'to_gifts.log'))
-        File.open(filename, 'a') do |file|
-          file.puts "#{@user}, #{date}, #{xp}, #{cry}, #{gifts.join(':').upcase}"
-        end unless gifts.empty?
         puts "#{@user}, #{date}, xp #{xp}, cry #{cry}, gifts #{gifts.join(':').upcase}"
       end
     end
@@ -714,9 +739,11 @@ module TankiOnline
       @logName = params.fetch(:log_name, "log/to_full.log")
 
       # start browser
+      x0 = 0
+      x0 = -768 if @maxBrowsers >= 3
       @brs = []
       @maxBrowsers.times do
-        params[:win_move] = [-768, -10] unless params.has_key? :win_move
+        params[:win_move] = [x0, -10] unless params.has_key? :win_move
         @brs << Browser.new(params)
         params[:win_move][0] += 1044
       end
@@ -762,26 +789,42 @@ module TankiOnline
       @logger.warn "Collect users from file: #{fn}"
       load_users fn
 
+      # multithreading
+      thrs = []
+      @brs.each do |br|
+        thrs << Thread.new {
+          loop do
+            br.step
+          end
+        }
+      end
+
       while !@logins.empty? do
         @brs.each do |br|
-          if br.idle? && !@logins.empty?
-            possible = @logins.select { |k, v| v[2] == 0 }
-            unless possible.keys.empty?
-              u = possible.keys[0]
-              p = @logins[u][0]
-              params = @logins[u][1]
-              puts "User: #{u} (#{@logins.length})"
-              @logins[u][2] = 1
-              br.collect u, p, params
-            end
-          end
-          br.step
-          if br.idle?
+          if br.idle? 
             u = br.user
             if br.user_done?
-              @logins.delete(u)
+              # delete from the list
+              @logins.delete(br.user)
+              br.user_clear
+              u = nil
             elsif !u.nil?
               # new try
+            end
+
+            if u.nil?
+              # add new user
+              possible = @logins.select { |k, v| v[2] == 0 }
+              unless possible.keys.empty?
+                u = possible.keys[0]
+                p = @logins[u][0]
+                params = @logins[u][1]
+                puts "User: #{u} (#{@logins.length})"
+                @logins[u][2] = 1
+                br.collect u, p, params
+              end
+            else
+              # re-try
               p = @logins[u][0]
               params = @logins[u][1]
               br.collect u, p, params
@@ -789,6 +832,11 @@ module TankiOnline
           end
         end
       end
+
+      thrs.each do |thr|
+        thr.kill
+      end
+
       @logger.warn "Collect users - done"
     end
 
