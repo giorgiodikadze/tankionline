@@ -75,6 +75,7 @@ module TankiOnline
     @@mutexScreenshot = Mutex.new
     @@mutexFile = Mutex.new
     @@mutexMouse = Mutex.new
+    @@mutexKeys = Mutex.new
 
     #
     attr_reader :user
@@ -89,28 +90,12 @@ module TankiOnline
       @winMove = params.fetch(:win_move, nil)
       @emptyScreenshot = params.fetch(:empty_screenshot, false)
 
-      # start browser
-      @br = Watir::Browser.new :chrome, :switches => %w[--disable-popup-blocking --disable-translate --test-type]
-      title = "TO" + (0...15).map { ('a'..'z').to_a[rand(26)] }.join
-      @br.execute_script "document.title=\"#{title}\";"
-      while (@winr = RAutomation::Window.new(:title => /#{Regexp.escape(title)}/)) && !@winr.exists?
-        _sleep 0.25
-      end
-      #puts @winr.exists?
-      raise "Cannot find window" unless @winr.exists?
-      @win = @br.window
-      if @winResize.is_a?(Array) and @winResize.size == 2
-        @win.resize_to @winResize[0], @winResize[1]
-        @win.move_to(@winMove[0], @winMove[1]) if @winMove.is_a?(Array) and @winMove.size == 2
-      else
-        @win.maximize
-      end
-      @winSize = @win.size
-      @winPos = @win.position
-
       # other params
       @logger = Logger.new @logName
       @logger.info "Started"
+
+      # browser instance
+      _init_browser
 
       # set initial status
       _change_status :idle
@@ -130,6 +115,10 @@ module TankiOnline
     def collect user, password, params = {}
       raise "Not idle" unless idle?
 
+      # if retry
+      _reset_browser if user == @user
+
+      # prepare environment
       _clear_user_data
       @user = user
       @userPassword = password
@@ -185,7 +174,23 @@ module TankiOnline
         next_status = :login_enter_data if _wait_done?
       when :login_enter_data
         _window_up
-        _enter_login_data @user, @userPassword
+        _enter_login_data_1 @user, @userPassword
+        next_status = :login_enter_data_2
+      when :login_enter_data_2
+        _window_up
+        _enter_login_data_2 @user, @userPassword
+        next_status = :login_enter_data_3
+      when :login_enter_data_3
+        _window_up
+        _enter_login_data_3 @user, @userPassword
+        next_status = :login_enter_data_4
+      when :login_enter_data_4
+        _window_up
+        _enter_login_data_4 @user, @userPassword
+        next_status = :login_enter_data_5
+      when :login_enter_data_5
+        _window_up
+        _enter_login_data_5 @user, @userPassword
         next_status = :main_page_wait
       when :main_page_wait
         _wait_init WAIT_MAIN_PAGE_LOADED
@@ -239,6 +244,7 @@ module TankiOnline
       when :idle
         # do nothing
       when :abort
+        _screenshot_save @user, _screenshot_chunky, "errors"
         # clear all data
         _clear_user_data
         next_status = :idle
@@ -293,6 +299,35 @@ module TankiOnline
       @br.ready_state == "complete"
     end
 
+    def _init_browser
+      # start browser
+      @logger.debug "Create new browser window"
+      @br = Watir::Browser.new :chrome, :switches => %w[--disable-popup-blocking --disable-translate --test-type]
+      title = "TO" + (0...15).map { ('a'..'z').to_a[rand(26)] }.join
+      @br.execute_script "document.title=\"#{title}\";"
+      while (@winr = RAutomation::Window.new(:title => /#{Regexp.escape(title)}/)) && !@winr.exists?
+        _sleep 0.25
+      end
+      #puts @winr.exists?
+      raise "Cannot find window" unless @winr.exists?
+      @win = @br.window
+      if @winResize.is_a?(Array) and @winResize.size == 2
+        @win.resize_to @winResize[0], @winResize[1]
+        @win.move_to(@winMove[0], @winMove[1]) if @winMove.is_a?(Array) and @winMove.size == 2
+      else
+        @win.maximize
+      end
+      @winSize = @win.size
+      @winPos = @win.position
+      @logger.debug "Window size #{@winSize} position #{@winPos}"
+    end
+
+    def _reset_browser
+      @logger.debug "Reset browser"
+      #@br.close
+      #_init_browser
+    end
+
     # bring window up
     def _window_up
       #@br.screenshot.png
@@ -315,8 +350,38 @@ module TankiOnline
       end
     end
 
+    def _send_key arg
+      hwnd = @winr.hwnd
+      #puts "Send key #{hwnd}: #{arg}"
+      if arg < 0x20
+        User32.SendMessage(hwnd, 0x0100, arg, 1);
+        User32.SendMessage(hwnd, 0x0101, arg, 1);
+      else
+        User32.SendMessage(hwnd, 0x0102, arg, 1);
+      end
+    end
+
     def _send_keys *args
-      @br.send_keys *args
+      #@br.send_keys *args
+      #@@mutexKeys.synchronize do
+      args.each do |cur|
+        if cur.is_a? Symbol
+          case cur
+          when :tab
+            _send_key 0x09
+          when :enter
+            _send_key 0x0d
+          when :escape
+            _send_key 0x1b
+          else
+            raise "Unsupported symbol"
+          end
+        else
+          cur.each_char do |c|
+            _send_key c.unpack("c")[0]
+          end
+        end
+      end
     end
 
     # get screenshot in chunky-png format
@@ -383,21 +448,40 @@ module TankiOnline
       }
     end
 
-    def _enter_login_data user, password
+    def _enter_login_data_1 user = nil, password = nil
       x = @winSize.width / 2# + @winPos.x
       y = @winSize.height * 1 / 3# + @winPos.y
       #mouse_move x, y
       #left_click
       _click_mouse x, y
-      sleep 0.1
-      _send_keys :tab, user.to_s, :tab, password.to_s, :enter
-=begin
+      _sleep 0.1
+    end
+
+    def _enter_login_data_2 user = nil, password = nil
+      #_send_keys :tab, user.to_s, :tab, password.to_s, :enter
       _send_keys :tab
+      _sleep 0.1
+    end
+
+    def _enter_login_data_3 user = nil, password = nil
       _send_keys user.to_s
       _send_keys :tab
+    end
+
+    def _enter_login_data_4 user = nil, password = nil
       _send_keys password.to_s
+    end
+
+    def _enter_login_data_5 user = nil, password = nil
       _send_keys :enter
-=end
+    end
+
+    def _enter_login_data user, password
+      _enter_login_data_1 user, password
+      _enter_login_data_2 user, password
+      _enter_login_data_3 user, password
+      _enter_login_data_4 user, password
+      _enter_login_data_5 user, password
     end
 
     # possible notifications
@@ -798,6 +882,7 @@ module TankiOnline
         thrs << Thread.new {
           loop do
             br.step
+            Thread.pass
           end
         }
       end
@@ -824,10 +909,13 @@ module TankiOnline
                 params = @logins[u][1]
                 puts "User: #{u} (#{@logins.length})"
                 @logins[u][2] = 1
+                @logger.debug "Started #{u}"
                 br.collect u, p, params
               end
             else
               # re-try
+              @logger.warn "Retry #{u}"
+           
               p = @logins[u][0]
               params = @logins[u][1]
               br.collect u, p, params
@@ -886,6 +974,7 @@ module TankiOnline
   end
 end
 
+Thread.abort_on_exception = true
 t = TankiOnline::CollectGifts.new :server_num => 50, :server_locale => 'en', :win_resize => [1024 + 16, 768], :max_browsers => 3, :empty_screenshot => false
 
 # do more than once to prevent random errors
