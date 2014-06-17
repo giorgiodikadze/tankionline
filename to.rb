@@ -173,24 +173,22 @@ module TankiOnline
         # wait some time to ensure login dialog will be show
         next_status = :login_enter_data if _wait_done?
       when :login_enter_data
-        _window_up
         _enter_login_data_1 @user, @userPassword
         next_status = :login_enter_data_2
       when :login_enter_data_2
-        _window_up
         _enter_login_data_2 @user, @userPassword
         next_status = :login_enter_data_3
       when :login_enter_data_3
-        _window_up
         _enter_login_data_3 @user, @userPassword
         next_status = :login_enter_data_4
       when :login_enter_data_4
-        _window_up
         _enter_login_data_4 @user, @userPassword
         next_status = :login_enter_data_5
       when :login_enter_data_5
-        _window_up
         _enter_login_data_5 @user, @userPassword
+        next_status = :login_enter_data_6
+      when :login_enter_data_6
+        _enter_login_data_6 @user, @userPassword
         next_status = :main_page_wait
       when :main_page_wait
         _wait_init WAIT_MAIN_PAGE_LOADED
@@ -362,7 +360,8 @@ module TankiOnline
     end
 
     def _send_keys *args
-      #@br.send_keys *args
+      @br.send_keys *args
+=begin
       #@@mutexKeys.synchronize do
       args.each do |cur|
         if cur.is_a? Symbol
@@ -382,6 +381,8 @@ module TankiOnline
           end
         end
       end
+      _sleep 0.5
+=end
     end
 
     # get screenshot in chunky-png format
@@ -465,14 +466,17 @@ module TankiOnline
 
     def _enter_login_data_3 user = nil, password = nil
       _send_keys user.to_s
-      _send_keys :tab
     end
 
     def _enter_login_data_4 user = nil, password = nil
-      _send_keys password.to_s
+      _send_keys :tab
     end
 
     def _enter_login_data_5 user = nil, password = nil
+      _send_keys password.to_s
+    end
+
+    def _enter_login_data_6 user = nil, password = nil
       _send_keys :enter
     end
 
@@ -482,6 +486,7 @@ module TankiOnline
       _enter_login_data_3 user, password
       _enter_login_data_4 user, password
       _enter_login_data_5 user, password
+      _enter_login_data_6 user, password
     end
 
     # possible notifications
@@ -877,6 +882,7 @@ module TankiOnline
       load_users fn
 
       # multithreading
+=begin
       thrs = []
       @brs.each do |br|
         thrs << Thread.new {
@@ -886,9 +892,12 @@ module TankiOnline
           end
         }
       end
+=end
 
       while !@logins.empty? do
         @brs.each do |br|
+          br.step
+
           if br.idle? 
             u = br.user
             if br.user_done?
@@ -924,9 +933,11 @@ module TankiOnline
         end
       end
 
+=begin
       thrs.each do |thr|
         thr.kill
       end
+=end
 
       @logger.warn "Collect users - done"
     end
