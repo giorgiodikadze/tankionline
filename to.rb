@@ -153,13 +153,18 @@ module TankiOnline
         _wait_init WAIT_LOGIN_PAGE_LOADED
         next_status = :login_dialog_wait2
       when :login_dialog_wait2
-        r = _img_check(_screenshot_chunky, 34, 66, 34, 66) { |c|
+        @screenshot = _screenshot_chunky
+        next_status = :login_dialog_wait3
+      when :login_dialog_wait3
+        r = _img_check(@screenshot, 34, 66, 34, 66) { |c|
            c == ChunkyPNG::Color::WHITE
         }
         if r
           next_status = :login_switch
         elsif _wait_done?
           next_status = :abort
+        else
+          next_status = :login_dialog_wait2
         end
       when :login_switch
         _window_up
@@ -194,14 +199,19 @@ module TankiOnline
         _wait_init WAIT_MAIN_PAGE_LOADED
         next_status = :main_page_wait2
       when :main_page_wait2
+        @screenshot = _screenshot_chunky
+        next_status = :main_page_wait3
+      when :main_page_wait3
         # login page has white
-        r = _img_check(_screenshot_chunky, 75, 100, 34, 66) { |c|
+        r = _img_check(@screenshot, 75, 100, 34, 66) { |c|
           c == ChunkyPNG::Color::WHITE || c == ChunkyPNG::Color.rgb(127, 127, 127)
         }
         if r
           next_status = :main_page_ready
         elsif _wait_done?
           next_status = :abort
+        else
+          next_status = :main_page_wait2
         end
       when :main_page_ready
         # click popups
@@ -220,7 +230,6 @@ module TankiOnline
         _parse_status _handle_popup_last_img
         next_status = :logout
       when :logout
-        _window_up
         _send_keys :escape
         next_status = :logout_wait_esc
       when :logout_wait_esc
@@ -229,7 +238,6 @@ module TankiOnline
       when :logout_wait_esc2
         next_status = :logout_enter if _wait_done?
       when :logout_enter
-        _window_up
         _send_keys :enter
         next_status = :logout_wait_enter
       when :logout_wait_enter
