@@ -70,6 +70,7 @@ module TankiOnline
     WAIT_POPUP_CLOSE = 1.5
     WAIT_LOGOUT_ESC = 1
     WAIT_LOGOUT_ENTER = 3
+    WAIT_LOGOUT_BROWSER_IDLE = 5
 
     #
     @@mutexScreenshot = Mutex.new
@@ -143,11 +144,7 @@ module TankiOnline
         next_status = :login_page_wait2 if _browser_ready?
       when :login_page_wait2
         # prepare to wait more (to ensure Flash has changed the page)
-        _wait_init WAIT_LOGIN_PAGE_STARTED
-        next_status = :login_page_wait3
-      when :login_page_wait3
-        # wait more to ensure Flash has changed the page
-        next_status = :login_dialog_wait if _wait_done?
+        next_status = _wait_step(:login_dialog_wait, WAIT_LOGIN_PAGE_STARTED)
       when :login_dialog_wait
         # wait login dialog to appear
         _wait_init WAIT_LOGIN_PAGE_LOADED
@@ -168,14 +165,7 @@ module TankiOnline
         end
       when :login_switch
         _switch_existing_login
-        next_status = :login_switch_wait
-      when :login_switch_wait
-        # prepare to wait some time (to ensure login dialog will be show)
-        _wait_init WAIT_LOGIN_DIALOG_SWITCHED
-        next_status = :login_switch_wait2
-      when :login_switch_wait2
-        # wait some time to ensure login dialog will be show
-        next_status = :login_enter_data if _wait_done?
+        next_status = _wait_step(:login_enter_data, WAIT_LOGIN_DIALOG_SWITCHED)
       when :login_enter_data
         _click_mouse @winSize.width / 2, @winSize.height * 1 / 3
         _sleep 0.1
@@ -227,39 +217,25 @@ module TankiOnline
         next_status = :main_page_next_popup
       when :main_page_next_popup
         _send_keys :enter
-        next_status = :main_page_next_popup2
-      when :main_page_next_popup2
-        _wait_init WAIT_POPUP_CLOSE
-        next_status = :main_page_next_popup2_wait
-      when :main_page_next_popup2_wait
-        @screenshot = _screenshot_chunky
-        next_status = :main_page_next_popup3 if _wait_done?
+        next_status = _wait_step(:main_page_next_popup3, WAIT_POPUP_CLOSE)
       when :main_page_next_popup3
+        @screenshot = _screenshot_chunky
         next_status = :main_page_ready
       when :main_page_no_popups
         _parse_status @screenshot
         next_status = :logout
       when :logout
         _send_keys :escape
-        next_status = :logout_wait_esc
-      when :logout_wait_esc
-        _wait_init WAIT_LOGOUT_ESC
-        next_status = :logout_wait_esc2
-      when :logout_wait_esc2
-        next_status = :logout_enter if _wait_done?
+        next_status = _wait_step(:logout_enter, WAIT_LOGOUT_ESC)
       when :logout_enter
         _send_keys :enter
-        next_status = :logout_wait_enter
-      when :logout_wait_enter
-        _wait_init WAIT_LOGOUT_ENTER
-        next_status = :logout_wait_enter2
-      when :logout_wait_enter2
-        next_status = :logout_wait if _wait_done?
+        next_status = _wait_step(:logout_wait, WAIT_LOGOUT_ENTER)
       when :logout_wait
-        next_status = :idle if _browser_ready?
+        next_status = _wait_step(:idle, WAIT_LOGOUT_BROWSER_IDLE) {
+          _browser_ready?
+        }
       when :wait_do
         next_status = @wait_next_status if _wait_done?
-        
       when :idle
         # do nothing
       when :abort
@@ -305,13 +281,28 @@ module TankiOnline
       @userPassword = nil
     end
 
-    # 
+    def _wait_step next_status, timeWait = 5, &blk
+      # init
+      @wait = [Time.now, timeWait]
+      @wait_next_status = next_status
+      @wait_condition = blk
+
+      # return the next step which will do the waiting
+      :wait_do
+    end
+
     def _wait_init timeWait
       @wait = [Time.now, timeWait]
     end
 
-    def _wait_done?
+    def _wait_time_done?
       Time.now - @wait[0] > @wait[1]
+    end
+
+    def _wait_done?
+      return true if _wait_time_done?
+      return true if @wait_condition.is_a?(Proc) && @wait_condition.call
+      false
     end
 
     def _browser_ready?
@@ -803,6 +794,7 @@ module TankiOnline
 
       # start browser
       x0 = 0
+      x0 = -224 if @maxBrowsers == 2
       x0 = -768 if @maxBrowsers >= 3
       @brs = []
       @maxBrowsers.times do
