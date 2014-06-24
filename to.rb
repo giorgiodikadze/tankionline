@@ -167,7 +167,6 @@ module TankiOnline
           next_status = :login_dialog_wait2
         end
       when :login_switch
-        _window_up
         _switch_existing_login
         next_status = :login_switch_wait
       when :login_switch_wait
@@ -178,22 +177,25 @@ module TankiOnline
         # wait some time to ensure login dialog will be show
         next_status = :login_enter_data if _wait_done?
       when :login_enter_data
-        _enter_login_data_1 @user, @userPassword
+        _click_mouse @winSize.width / 2, @winSize.height * 1 / 3
+        _sleep 0.1
         next_status = :login_enter_data_2
       when :login_enter_data_2
-        _enter_login_data_2 @user, @userPassword
+        _send_keys :tab
         next_status = :login_enter_data_3
       when :login_enter_data_3
-        _enter_login_data_3 @user, @userPassword
+        _send_keys @user.to_s
+        _sleep 0.4
+        _send_keys :tab
+        _sleep 0.5
+        _send_keys @userPassword.to_s
         next_status = :login_enter_data_4
       when :login_enter_data_4
-        _enter_login_data_4 @user, @userPassword
+        _send_keys :enter
         next_status = :login_enter_data_5
       when :login_enter_data_5
-        _enter_login_data_5 @user, @userPassword
         next_status = :login_enter_data_6
       when :login_enter_data_6
-        _enter_login_data_6 @user, @userPassword
         next_status = :main_page_wait
       when :main_page_wait
         _wait_init WAIT_MAIN_PAGE_LOADED
@@ -214,20 +216,28 @@ module TankiOnline
           next_status = :main_page_wait2
         end
       when :main_page_ready
-        # click popups
-        r = _handle_popup
-        if r
-          next_status = :main_page_next_popup
+        @userGiftsDate ||= DateTime.now.strftime('%Y%m%d%H%M%S')
+        if _check_main_page_popup?(@screenshot)
+          next_status = :main_page_handle_popup
         else
           next_status = :main_page_no_popups
         end
+      when :main_page_handle_popup
+        _handle_popup @screenshot
+        next_status = :main_page_next_popup
       when :main_page_next_popup
+        _send_keys :enter
+        next_status = :main_page_next_popup2
+      when :main_page_next_popup2
         _wait_init WAIT_POPUP_CLOSE
-        next_status = :main_page_next_popup_wait
-      when :main_page_next_popup_wait
-        next_status = :main_page_ready if _wait_done?
+        next_status = :main_page_next_popup2_wait
+      when :main_page_next_popup2_wait
+        @screenshot = _screenshot_chunky
+        next_status = :main_page_next_popup3 if _wait_done?
+      when :main_page_next_popup3
+        next_status = :main_page_ready
       when :main_page_no_popups
-        _parse_status _handle_popup_last_img
+        _parse_status @screenshot
         next_status = :logout
       when :logout
         _send_keys :escape
@@ -247,6 +257,9 @@ module TankiOnline
         next_status = :logout_wait if _wait_done?
       when :logout_wait
         next_status = :idle if _browser_ready?
+      when :wait_do
+        next_status = @wait_next_status if _wait_done?
+        
       when :idle
         # do nothing
       when :abort
@@ -457,46 +470,6 @@ module TankiOnline
       }
     end
 
-    def _enter_login_data_1 user = nil, password = nil
-      x = @winSize.width / 2# + @winPos.x
-      y = @winSize.height * 1 / 3# + @winPos.y
-      #mouse_move x, y
-      #left_click
-      _click_mouse x, y
-      _sleep 0.1
-    end
-
-    def _enter_login_data_2 user = nil, password = nil
-      #_send_keys :tab, user.to_s, :tab, password.to_s, :enter
-      _send_keys :tab
-      _sleep 0.1
-    end
-
-    def _enter_login_data_3 user = nil, password = nil
-      _send_keys user.to_s
-    end
-
-    def _enter_login_data_4 user = nil, password = nil
-      _send_keys :tab
-    end
-
-    def _enter_login_data_5 user = nil, password = nil
-      _send_keys password.to_s
-    end
-
-    def _enter_login_data_6 user = nil, password = nil
-      _send_keys :enter
-    end
-
-    def _enter_login_data user, password
-      _enter_login_data_1 user, password
-      _enter_login_data_2 user, password
-      _enter_login_data_3 user, password
-      _enter_login_data_4 user, password
-      _enter_login_data_5 user, password
-      _enter_login_data_6 user, password
-    end
-
     # possible notifications
     def _check_main_page_popup? img
       # check is any popup shown on the main page?
@@ -512,35 +485,24 @@ module TankiOnline
       sleep t * (1 - d / 2 + d * Random.rand(1))
     end
 
-    def _handle_popup
-      @userGiftsDate ||= DateTime.now.strftime('%Y%m%d%H%M%S')
+    # img will be changed
+    def _handle_popup img
+      @logger.debug "Handle popup"
       gifts = []
-      img = _screenshot_chunky
-      @lastHandledPopupImg = img
-      if _check_main_page_popup?(img)
-        gift = _img_get_gift img
-        unless gift.empty?
-          _screenshot_save @user, img, 'gift'
-          gifts += gift
-        else
-          @logger.debug "No gift found"
-          _screenshot_save @user, img, 'nongift'
-        end
-        _send_keys :enter
-        #_sleep 1.5 # to change timestamp also
-        @logger.debug "Popup handled"
-        unless gifts.empty?
-          @userGifts = [] unless @userGifts.is_a?(Array)
-          @userGifts += gifts 
-        end
-        true
+      gift = _img_get_gift img
+      unless gift.empty?
+        @logger.debug "Gift found: #{gift}"
+        _screenshot_save @user, img, 'gift'
+        gifts += gift
       else
-        false
+        @logger.debug "No gift found"
+        _screenshot_save @user, img, 'nongift'
       end
-    end
-
-    def _handle_popup_last_img
-      @lastHandledPopupImg
+      @logger.debug "Popup handled"
+      unless gifts.empty?
+        @userGifts = [] unless @userGifts.is_a?(Array)
+        @userGifts += gifts 
+      end
     end
 
     def _parse_status img
@@ -575,6 +537,7 @@ module TankiOnline
       list = Dir.entries(dir).select {|entry| !File.directory? File.join(dir, entry) and !(entry =='.' || entry == '..') and File.extname(entry) == '.png'}
       images = []
       list.each do |f|
+        #puts f
         fn = File.join(dir, f)
         img = ChunkyPNG::Image.from_file(fn)
         img_s = _img_get_status img, :status
