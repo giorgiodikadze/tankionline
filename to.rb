@@ -81,6 +81,7 @@ module TankiOnline
     #
     attr_reader :user
     attr_reader :status
+    attr_reader :mode
 
     def initialize params={}
       # parse parameters
@@ -120,14 +121,13 @@ module TankiOnline
       _reset_browser if user == @user
 
       # prepare environment
+      @mode = params.fetch(:mode, :collect)
       _clear_user_data
-      @user = user
-      @userPassword = password
-      @userParams = params
+      _init_user_data user, password, params
 
       _change_status :login
 
-      @logger.info "Start to do user: #{user}"
+      @logger.info "Start to do '#{mode}' for user: #{user}"
     end
 
     def step
@@ -177,8 +177,9 @@ module TankiOnline
         _send_keys @user.to_s
         _sleep 0.4
         _send_keys :tab
-        _sleep 0.5
+        _sleep 0.6
         _send_keys @userPassword.to_s
+        _sleep 0.3
         next_status = :login_enter_data_4
       when :login_enter_data_4
         _send_keys :enter
@@ -223,7 +224,52 @@ module TankiOnline
         next_status = :main_page_ready
       when :main_page_no_popups
         _parse_status @screenshot
-        next_status = :logout
+        case mode
+        when :vk_add, :vk_remove
+          next_status = :open_settings
+        else
+          next_status = :logout
+        end
+      when :open_settings
+        _click_mouse 919, 91
+        next_status = _wait_step(:vk_button, 1)
+      when :vk_button
+        _click_mouse 450, 520
+        next_status = _wait_step(:vk_button_ready, 1)
+      when :vk_button_ready
+        if mode == :vk_add
+          next_status = :vk_add_login
+        else
+          _sleep 1
+          _send_keys :enter # close 'vk linked' popup
+          _sleep 0.5
+          _send_keys :enter # close settings
+          _sleep 0.5
+          next_status = :logout
+        end
+      when :vk_add_login
+        sleep 5
+        win = @br.window(:title, "VK | Login")
+        if win.exists?
+          win.use do
+            @br.text_field(:name, "email").set("")
+            @br.text_field(:name, "pass").set("")
+            @br.button(:text, "Log in").click
+          end
+        else
+          puts 'Should be autolinked...'
+        end
+        @br.wait
+        _sleep 3
+        _send_keys :enter # close 'vk linked' popup
+        _sleep 0.5
+        _send_keys :enter # close settings
+        _sleep 0.5
+        @br.goto 'http://vk.com/tanki_online'
+        sleep 40
+        _screenshot_save @user, _screenshot_chunky, "work", false
+        @mode = :vk_remove
+        next_status = :login
       when :logout
         _send_keys :escape
         next_status = _wait_step(:logout_enter, WAIT_LOGOUT_ESC)
@@ -279,6 +325,12 @@ module TankiOnline
       @userXP = nil
       @userCry = nil
       @userPassword = nil
+    end
+
+    def _init_user_data user, password, params
+      @user = user
+      @userPassword = password
+      @userParams = params
     end
 
     def _wait_step next_status, timeWait = 5, &blk
@@ -415,10 +467,14 @@ module TankiOnline
       file = File.expand_path(file)
     end
 
-    def _screenshot_save user, img = nil, subfolder = ""
+    def _screenshot_save user, img = nil, subfolder = "", popup_only = true
       fn = _screenshot_file(user, true, subfolder)
       if img
-        popup = _img_get_popup(img)
+        if popup_only
+          popup = _img_get_popup(img)
+        else
+          popup = img
+        end
         popup.save("#{fn}.png") if popup
         @logger.warn "Screenshot '#{fn}' is saved (#{popup.nil?})"
       else
@@ -791,6 +847,7 @@ module TankiOnline
       @brParams = params
       @maxBrowsers = params.fetch(:max_browsers, 3)
       @logName = params.fetch(:log_name, "log/to_full.log")
+      @collectMode = params.fetch(:collect_mode, :collect)
 
       # start browser
       x0 = 0
@@ -879,6 +936,7 @@ module TankiOnline
                 u = possible.keys[0]
                 p = @logins[u][0]
                 params = @logins[u][1]
+                params[:mode] = @collectMode
                 puts "User: #{u} (#{@logins.length})"
                 @logins[u][2] = 1
                 @logger.debug "Started #{u}"
@@ -949,6 +1007,7 @@ module TankiOnline
 end
 
 Thread.abort_on_exception = true
+#t = TankiOnline::CollectGifts.new :server_num => 50, :server_locale => 'ru', :win_resize => [1024 + 16, 768], :max_browsers => 1, :empty_screenshot => false, :collect_mode => :vk_add
 t = TankiOnline::CollectGifts.new :server_num => 50, :server_locale => 'en', :win_resize => [1024 + 16, 768], :max_browsers => 3, :empty_screenshot => false
 
 # do more than once to prevent random errors
