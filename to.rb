@@ -55,8 +55,8 @@ module TankiOnline
 
   class Browser
     URL_MASK = {
-      :default => "http://tankionline.com/battle-%s%d.html",
-      :br => "http://tankionline.com.br/battle-%s%d.html",
+      :default => "http://tankionline.com/battle-%s.html#/server=EN%d",
+      :br => "http://tankionline.com.br/battle.html#/server=PT%d",
       :cn => "http://3dtank.com/battle-%s%d.html"
     }
     SUBIMAGES = {
@@ -168,25 +168,24 @@ module TankiOnline
         next_status = _wait_step(:login_enter_data, WAIT_LOGIN_DIALOG_SWITCHED)
       when :login_enter_data
         _click_mouse @winSize.width / 2, @winSize.height * 1 / 3
-        _sleep 0.1
-        next_status = :login_enter_data_2
+        next_status = _wait_step(:login_enter_data_2, 0.1)
       when :login_enter_data_2
         _send_keys :tab
-        next_status = :login_enter_data_3
+        next_status = _wait_step(:login_enter_data_3, 0.1)
       when :login_enter_data_3
         _send_keys @user.to_s
-        _sleep 0.4
-        _send_keys :tab
-        _sleep 0.6
-        _send_keys @userPassword.to_s
-        _sleep 0.3
-        next_status = :login_enter_data_4
+        next_status = _wait_step(:login_enter_data_4, 0.3)
       when :login_enter_data_4
-        _send_keys :enter
-        next_status = :login_enter_data_5
+        _send_keys :tab
+        _sleep 0.1
+        next_status = _wait_step(:login_enter_data_5, 0.3)
       when :login_enter_data_5
-        next_status = :login_enter_data_6
+        _send_keys @userPassword.to_s
+        _sleep 0.4
+        next_status = _wait_step(:login_enter_data_6, 0.5)
       when :login_enter_data_6
+        _send_keys :enter
+        _sleep 0.5
         next_status = :main_page_wait
       when :main_page_wait
         _wait_init WAIT_MAIN_PAGE_LOADED
@@ -231,9 +230,11 @@ module TankiOnline
           next_status = :logout
         end
       when :open_settings
+        _sleep 5
         _click_mouse 919, 91
         next_status = _wait_step(:vk_button, 1)
       when :vk_button
+        _sleep 2
         _click_mouse 450, 520
         next_status = _wait_step(:vk_button_ready, 1)
       when :vk_button_ready
@@ -252,8 +253,8 @@ module TankiOnline
         win = @br.window(:title, "VK | Login")
         if win.exists?
           win.use do
-            @br.text_field(:name, "email").set("")
-            @br.text_field(:name, "pass").set("")
+            @br.text_field(:name, "email").set(VK_LOGIN)
+            @br.text_field(:name, "pass").set(VK_PWD)
             @br.button(:text, "Log in").click
           end
         else
@@ -265,8 +266,18 @@ module TankiOnline
         _sleep 0.5
         _send_keys :enter # close settings
         _sleep 0.5
-        @br.goto 'http://vk.com/tanki_online'
-        sleep 40
+        begin
+          @br.goto 'http://vk.com/tanki_online'
+        rescue
+          begin
+            @br.goto 'http://vk.com/tanki_online'
+          rescue 
+            puts "Exception: #{$!}"
+          end
+        end
+        #@br.wait
+        #@br.button(:id, "apps_i_btn").click
+        sleep 40 + 25
         _screenshot_save @user, _screenshot_chunky, "work", false
         @mode = :vk_remove
         next_status = :login
@@ -311,7 +322,7 @@ module TankiOnline
       end
     end
 
-    private
+    #private
 
     #
     def _change_status st
@@ -364,7 +375,10 @@ module TankiOnline
     def _init_browser
       # start browser
       @logger.debug "Create new browser window"
-      @br = Watir::Browser.new :chrome, :switches => %w[--disable-popup-blocking --disable-translate --test-type]
+      switches = %w[--disable-popup-blocking --disable-translate --test-type]
+      switches = %w[--disable-popup-blocking --disable-translate --test-type --disk-cache-dir=c:\\tmp\\cache]
+      #puts switches.inspect
+      @br = Watir::Browser.new :chrome, :switches => switches
       title = "TO" + (0...15).map { ('a'..'z').to_a[rand(26)] }.join
       @br.execute_script "document.title=\"#{title}\";"
       while (@winr = RAutomation::Window.new(:title => /#{Regexp.escape(title)}/)) && !@winr.exists?
@@ -414,7 +428,7 @@ module TankiOnline
 
     def _send_key arg
       hwnd = @winr.hwnd
-      #puts "Send key #{hwnd}: #{arg}"
+      puts "Send key #{hwnd}: #{arg}"
       if arg < 0x20
         User32.SendMessage(hwnd, 0x0100, arg, 1);
         User32.SendMessage(hwnd, 0x0101, arg, 1);
@@ -497,7 +511,7 @@ module TankiOnline
       locale = params.fetch(:locale, @serverLocale)
       case locale
       when 'br'
-        URL_MASK[:br] % ['', 1]
+        URL_MASK[:br] % [1]
       when 'cn'
         URL_MASK[:cn] % ['', 1]
       else
@@ -584,20 +598,23 @@ module TankiOnline
       list = Dir.entries(dir).select {|entry| !File.directory? File.join(dir, entry) and !(entry =='.' || entry == '..') and File.extname(entry) == '.png'}
       images = []
       list.each do |f|
-        #puts f
-        fn = File.join(dir, f)
-        img = ChunkyPNG::Image.from_file(fn)
-        img_s = _img_get_status img, :status
-        img_c = _img_get_status img, :cry
-        next if img_s.nil? or img_c.nil? or img_s.width < 5 or img_c.width < 5 or img_s.height < 9 or img_c.height < 9
-        img_s.crop!(1, 0, img_s.width - 2, img_s.height)
-        img_c.crop!(1, 0, img_c.width - 2, img_c.height)
-        img_both = ChunkyPNG::Image.new(img_s.width + img_c.width, [img_s.height, img_c.height].max)
-        img_both.compose!(img_s, 0, 0)
-        img_both.compose!(img_c, img_s.width - 1, 0)
-        img = img_both
-        img.crop!(2, 3, img.width - 2 - 1, img.height - 3 - 3)
-        images << img
+        begin
+          fn = File.join(dir, f)
+          img = ChunkyPNG::Image.from_file(fn)
+          img_s = _img_get_status img, :status
+          img_c = _img_get_status img, :cry
+          next if img_s.nil? or img_c.nil? or img_s.width < 5 or img_c.width < 5 or img_s.height < 9 or img_c.height < 9
+          img_s.crop!(1, 0, img_s.width - 2, img_s.height)
+          img_c.crop!(1, 0, img_c.width - 2, img_c.height)
+          img_both = ChunkyPNG::Image.new(img_s.width + img_c.width, [img_s.height, img_c.height].max)
+          img_both.compose!(img_s, 0, 0)
+          img_both.compose!(img_c, img_s.width - 1, 0)
+          img = img_both
+          img.crop!(2, 3, img.width - 2 - 1, img.height - 3 - 3)
+          images << img
+        rescue
+          puts "Rescued handling #{f}"
+        end
       end
       w = 0
       h = 0
@@ -635,7 +652,7 @@ module TankiOnline
       w = img.width
       h = img.height
       ya = 0
-      xc = w / 3
+      xc = w / 4
       # find status bar
       while ya < 50 && ya < h do
         c = img.get_pixel(xc, ya)
@@ -645,6 +662,7 @@ module TankiOnline
       yb = ya + 10
       while yb < 64 && yb < h do
         c = img.get_pixel(xc, yb)
+        #puts "xc #{xc}, ya #{ya}, yb #{yb}, c #{c}"
         break if ChunkyPNG::Color.grayscale?(c) && ChunkyPNG::Color.a(c) == 255 && ChunkyPNG::Color.r(c) > 96
         yb += 1
       end
@@ -875,7 +893,9 @@ module TankiOnline
     end
 
     def load_users fn
-      File.readlines(fn).shuffle.each do |line|
+      lines = File.readlines(fn)
+      #lines.shuffle!
+      lines.each do |line|
         line.strip!
         next if line.empty?
         next if ((line[0] == '#') || (line[0] == ';'))
@@ -970,11 +990,13 @@ module TankiOnline
     end
 
     def i img
+      br = @brs.first
       #_img_get_gift img
       #[_img_get_xp(img), _img_get_cry(img)]
-      r = [_img_get_xp(img), _img_get_cry(img)]
-      _img_status_read_prepare(img).save('st.png')
-      r
+      #r = [_img_get_xp(img), _img_get_cry(img)]
+      #br._img_status_read_prepare(img).save('st.png')
+      br._img_get_status(img).save("st.png")
+      #r
       #_img_status_read_prepare(_img_get_status img, :both)
       #puts _find_subimages(img, SUBIMAGES[:gift]).inspect
       #puts _find_subimages(img, @@subimages_rank).inspect
@@ -1007,8 +1029,9 @@ module TankiOnline
 end
 
 Thread.abort_on_exception = true
-#t = TankiOnline::CollectGifts.new :server_num => 50, :server_locale => 'ru', :win_resize => [1024 + 16, 768], :max_browsers => 1, :empty_screenshot => false, :collect_mode => :vk_add
-t = TankiOnline::CollectGifts.new :server_num => 50, :server_locale => 'en', :win_resize => [1024 + 16, 768], :max_browsers => 3, :empty_screenshot => false
+#t = TankiOnline::CollectGifts.new :server_num => 12, :server_locale => 'ru', :win_resize => [1024 + 16, 768], :max_browsers => 1, :empty_screenshot => false, :collect_mode => :vk_add
+#t = TankiOnline::CollectGifts.new :server_num => 40, :server_locale => 'en', :win_resize => [1024 + 16, 768], :max_browsers => 3, :empty_screenshot => false
+t = TankiOnline::CollectGifts.new :server_num => 10, :server_locale => 'en', :win_resize => [1024 + 16, 768], :max_browsers => 1, :empty_screenshot => false
 
 # do more than once to prevent random errors
 if ARGV.length > 0 && File.exists?(ARGV[0]) && !File.directory?(ARGV[0])
@@ -1032,7 +1055,7 @@ elsif ARGV.length > 1 && ARGV[0] == 'i'
     #puts list.inspect
   elsif File.file? fp
     image = ChunkyPNG::Image.from_file(fp)
-      puts "#{fp}: #{t.i(image).inspect}"
+    puts "#{fp}: #{t.i(image).inspect}"
   else
     puts "Unknown parameter"
   end
