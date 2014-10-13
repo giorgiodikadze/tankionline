@@ -597,10 +597,12 @@ module TankiOnline
       dir = File.dirname(_screenshot_file('_', false, "status"))
       list = Dir.entries(dir).select {|entry| !File.directory? File.join(dir, entry) and !(entry =='.' || entry == '..') and File.extname(entry) == '.png'}
       images = []
+      images_xp = Hash.new { |h, k| h[k] = [] }
       list.each do |f|
         begin
           fn = File.join(dir, f)
           img = ChunkyPNG::Image.from_file(fn)
+          xp = _img_get_xp(img).to_i
           img_s = _img_get_status img, :status
           img_c = _img_get_status img, :cry
           next if img_s.nil? or img_c.nil? or img_s.width < 5 or img_c.width < 5 or img_s.height < 9 or img_c.height < 9
@@ -612,8 +614,9 @@ module TankiOnline
           img = img_both
           img.crop!(2, 3, img.width - 2 - 1, img.height - 3 - 3)
           images << img
+          images_xp[xp] << img
         rescue
-          puts "Rescued handling #{f}"
+          puts "Rescued handling #{f}: #{$!}\n#{$@}"
         end
       end
       w = 0
@@ -630,6 +633,18 @@ module TankiOnline
         h += img.height
       end
       global.save('_.png')
+      # xp
+      global = ChunkyPNG::Image.new(w, h, ChunkyPNG::Color::TRANSPARENT)
+      h = 0
+      order = images_xp.keys.sort
+      order.each do |k|
+        arr = images_xp[k]
+        arr.each do |img|
+          global.compose!(img, 0, h)
+          h += img.height
+        end
+      end
+      global.save('__.png')
     end
 
     # prepare status window for recognition
