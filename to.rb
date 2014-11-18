@@ -14,6 +14,12 @@ module User32
     :SendMessageA, [:uint, :uint, :uint, :uint], :uint
 end
 
+begin
+  require_relative 'vk'
+rescue LoadError
+  puts "Missing VK config"
+end
+
 module TankiOnline
   require 'logger'
   require 'watir-webdriver'
@@ -55,17 +61,20 @@ module TankiOnline
 
   class Browser
     URL_MASK = {
-      :default => "http://tankionline.com/battle-%s.html#/server=EN%d",
+      :default => "http://tankionline.com/battle-%s.html#/server=%s%d",
       :br => "http://tankionline.com.br/battle.html#/server=PT%d",
       :cn => "http://3dtank.com/battle-%s%d.html"
     }
     SUBIMAGES = {
       :gift => TankiOnline::_load_subimages("gift", ["pro", "cry", "dcc", "exp", "da", "dd", "mine", "nitro", "aid"]),
-      :char => TankiOnline::_load_subimages("chr", [{"sep" => "/"}, {"colon" => ":"}, "0", "1", "2", "3", "4", "5", "6", "7", "8", "9"])
+      :char => TankiOnline::_load_subimages("chr", [{"sep" => "/"}, {"colon" => ":"}, "0", "1", "2", "3", "4", "5", "6", "7", "8", "9"]),
+      :vk_ready => TankiOnline::_load_subimages("vk", ["gift_cry", "icon_friends"]),#, "icon_friends_dark"]),
     }
     WAIT_LOGIN_PAGE_STARTED = 1
     WAIT_LOGIN_PAGE_LOADED = 60*3
     WAIT_LOGIN_DIALOG_SWITCHED = 1.4
+    WAIT_LOGIN_BY_VK = 1.5
+    WAIT_LOGIN_IN_VK_LOADED = 90
     WAIT_MAIN_PAGE_LOADED = 150
     WAIT_POPUP_CLOSE = 1.5
     WAIT_LOGOUT_ESC = 1
@@ -87,10 +96,12 @@ module TankiOnline
       # parse parameters
       @serverNum = params.fetch(:server_num, 40)
       @serverLocale = params.fetch(:server_locale, "en")
+      @serverTarget = params.fetch(:server_target, "RU")
       @logName = params.fetch(:log_name, "log/to_browser_#{DateTime.now.strftime('%Y%m%d%H%M%S%L')}.log")
       @winResize = params.fetch(:win_resize, nil)
       @winMove = params.fetch(:win_move, nil)
       @emptyScreenshot = params.fetch(:empty_screenshot, false)
+      @vkInitialized = false
 
       # other params
       @logger = Logger.new @logName
@@ -136,6 +147,9 @@ module TankiOnline
 
       case @status
       when :login
+        # login to VK if needed
+        _login_vk(VK_LOGIN, VK_PWD) if ((mode == :vk_add || mode == :vk_remove) && !@vkInitialized)
+
         # browser to go to login page
         @br.goto _get_login_url(@userParams)
         next_status = :login_page_wait
@@ -165,7 +179,14 @@ module TankiOnline
         end
       when :login_switch
         _switch_existing_login
-        next_status = _wait_step(:login_enter_data, WAIT_LOGIN_DIALOG_SWITCHED)
+        if mode == :vk_remove
+          next_status = _wait_step(:login_by_vk, WAIT_LOGIN_DIALOG_SWITCHED)
+        else
+          next_status = _wait_step(:login_enter_data, WAIT_LOGIN_DIALOG_SWITCHED)
+        end
+      when :login_by_vk
+        _click_login_vk
+        next_status = _wait_step(:main_page_wait, WAIT_LOGIN_BY_VK)
       when :login_enter_data
         _click_mouse @winSize.width / 2, @winSize.height * 1 / 3
         next_status = _wait_step(:login_enter_data_2, 0.1)
@@ -275,9 +296,23 @@ module TankiOnline
             puts "Exception: #{$!}"
           end
         end
+        sleep 5
+        _wait_init WAIT_LOGIN_IN_VK_LOADED
+        next_status = :vk_add_login2
+      when :vk_add_login2
+        @screenshot = _screenshot_chunky
+        if _img_get_vk_ready(@screenshot)
+          next_status = :vk_add_login3
+        elsif _wait_done?
+          next_status = :abort
+        else
+          next_status = :vk_add_login2
+        end
         #@br.wait
         #@br.button(:id, "apps_i_btn").click
-        sleep 40 + 25
+        #sleep 40 + 25
+      when :vk_add_login3
+        sleep 5
         _screenshot_save @user, _screenshot_chunky, "work", false
         @mode = :vk_remove
         next_status = :login
@@ -415,6 +450,19 @@ module TankiOnline
       #_sleep 0.25
     end
 
+    def _login_vk name, pwd
+      @br.goto 'http://vk.com/'
+      @br.wait
+      @br.text_field(:id, "quick_email").set(name)
+      @br.wait
+      @br.text_field(:id, "quick_pass").set(pwd)
+      @br.wait
+      @br.button(:id, "quick_login_button").click
+      @br.wait
+      sleep 2
+      @vkInitialized = true
+    end
+
     def _click_mouse x, y
       hwnd = @winr.hwnd
       dw = (x + y * 0x10000).to_i
@@ -515,8 +563,20 @@ module TankiOnline
       when 'cn'
         URL_MASK[:cn] % ['', 1]
       else
-        URL_MASK[:default] % [@serverLocale, @serverNum]
+        URL_MASK[:default] % [@serverLocale, @serverTarget, @serverNum]
       end
+    end
+
+    def _click_login_vk
+      x = @winSize.width * 7 / 16 # + @winPos.x
+      y2 = @winSize.height * 3 / 4# + @winPos.y
+      y1 = @winSize.height * 1 / 2# + @winPos.y
+      y2.step(y1, -8) { |y|
+        #puts "#{x}, #{y}"
+        _click_mouse x, y
+        #mouse_move x, y
+        #left_click
+      }
     end
 
     def _switch_existing_login
@@ -872,6 +932,12 @@ module TankiOnline
       end
       out
     end
+
+    def _img_get_vk_ready img
+      data = _find_subimages img, SUBIMAGES[:vk_ready], true
+      #puts data.inspect
+      !data.empty?
+    end
   end
 
   class CollectGifts
@@ -1006,11 +1072,12 @@ module TankiOnline
 
     def i img
       br = @brs.first
-      #_img_get_gift img
+      br._img_get_gift img
       #[_img_get_xp(img), _img_get_cry(img)]
       #r = [_img_get_xp(img), _img_get_cry(img)]
       #br._img_status_read_prepare(img).save('st.png')
-      br._img_get_status(img).save("st.png")
+      #br._img_get_status(img).save("st.png")
+      #br._img_get_vk_ready(img)
       #r
       #_img_status_read_prepare(_img_get_status img, :both)
       #puts _find_subimages(img, SUBIMAGES[:gift]).inspect
@@ -1044,9 +1111,11 @@ module TankiOnline
 end
 
 Thread.abort_on_exception = true
+#sleep ( 2 * 60 - 15 ) * 60
 #t = TankiOnline::CollectGifts.new :server_num => 12, :server_locale => 'ru', :win_resize => [1024 + 16, 768], :max_browsers => 1, :empty_screenshot => false, :collect_mode => :vk_add
 #t = TankiOnline::CollectGifts.new :server_num => 40, :server_locale => 'en', :win_resize => [1024 + 16, 768], :max_browsers => 3, :empty_screenshot => false
 t = TankiOnline::CollectGifts.new :server_num => 10, :server_locale => 'en', :win_resize => [1024 + 16, 768], :max_browsers => 1, :empty_screenshot => false
+#t = TankiOnline::CollectGifts.new :server_num => 3, :server_locale => 'ru', :win_resize => [1024 + 16, 768], :max_browsers => 1, :empty_screenshot => false
 
 # do more than once to prevent random errors
 if ARGV.length > 0 && File.exists?(ARGV[0]) && !File.directory?(ARGV[0])
