@@ -57,6 +57,7 @@ module TankiOnline
       end
       out
     end
+
   end
 
   class Browser
@@ -100,6 +101,7 @@ module TankiOnline
       @logName = params.fetch(:log_name, "log/to_browser_#{DateTime.now.strftime('%Y%m%d%H%M%S%L')}.log")
       @winResize = params.fetch(:win_resize, nil)
       @winMove = params.fetch(:win_move, nil)
+      @refId = params.fetch(:ref_id, nil)
       @emptyScreenshot = params.fetch(:empty_screenshot, false)
       @vkInitialized = false
 
@@ -172,11 +174,51 @@ module TankiOnline
         }
         if r
           next_status = :login_switch
+          next_status = :reg if mode == :reg
         elsif _wait_done?
           next_status = :abort
         else
           next_status = :login_dialog_wait2
         end
+      when :reg
+        @regCounter ||= 0
+        sleep 0.5
+        _click_mouse @winSize.width / 2, @winSize.height * 1 / 3
+        sleep 0.3
+        _send_keys :tab
+        sleep 0.2
+        _send_keys @user.to_s
+        sleep 0.1
+        _send_keys :tab
+        sleep 0.2
+        _send_keys @userPassword.to_s
+        sleep 0.1
+        _send_keys :tab
+        sleep 0.2
+        _send_keys @userPassword.to_s
+        sleep 0.1
+        _send_keys :enter
+        sleep 8
+        begin
+          @br.wait
+        rescue
+          sleep 1
+          @br.wait
+        end
+        begin
+          @br.goto 'about:'
+        rescue
+          sleep 1
+          begin @br.goto 'about:' rescue @br.goto 'about:' end
+        end
+        @br.wait
+        sleep 0.1
+        @br.cookies.clear
+        sleep 0.4
+        @regCounter += 1
+        puts "Counter: #{@regCounter}"
+        _reinit_browser if @regCounter % 20 == 0
+        next_status = :logout_wait
       when :login_switch
         _switch_existing_login
         if mode == :vk_remove
@@ -433,6 +475,12 @@ module TankiOnline
       @logger.debug "Window size #{@winSize} position #{@winPos}"
     end
 
+    def _reinit_browser
+      @logger.debug "Reinit browser"
+      @br.close
+      _init_browser
+    end
+
     def _reset_browser
       @logger.debug "Reset browser"
       #@br.close
@@ -563,7 +611,9 @@ module TankiOnline
       when 'cn'
         URL_MASK[:cn] % ['', 1]
       else
-        URL_MASK[:default] % [@serverLocale, @serverTarget, @serverNum]
+        s = URL_MASK[:default] % [@serverLocale, @serverTarget, @serverNum]
+        s = "#{s}&friend=#{@refId}" unless @refId.nil?
+        s
       end
     end
 
@@ -953,11 +1003,6 @@ module TankiOnline
       x0 = -224 if @maxBrowsers == 2
       x0 = -768 if @maxBrowsers >= 3
       @brs = []
-      @maxBrowsers.times do
-        params[:win_move] = [x0, -10] unless params.has_key? :win_move
-        @brs << Browser.new(params)
-        params[:win_move][0] += 1044
-      end
 
       # other params
       #@crypter = OpenSSL::Cipher.new 'AES-128-CBC'
@@ -965,6 +1010,16 @@ module TankiOnline
       @logger.info "Started"
       @logins = {}
     end
+
+    def init_browsers
+      return unless @brs.empty?
+      @maxBrowsers.times do
+        params[:win_move] = [x0, -10] unless params.has_key? :win_move
+        @brs << Browser.new(params)
+        params[:win_move][0] += 1044
+      end
+    end
+    private :init_browsers
 
     def finish
       @brs[0].combine_statuses
@@ -1016,6 +1071,8 @@ module TankiOnline
 =end
 
       while !@logins.empty? do
+        init_browsers # to prevent init if no users loaded
+
         @brs.each do |br|
           br.step
 
@@ -1116,6 +1173,7 @@ Thread.abort_on_exception = true
 #t = TankiOnline::CollectGifts.new :server_num => 40, :server_locale => 'en', :win_resize => [1024 + 16, 768], :max_browsers => 3, :empty_screenshot => false
 t = TankiOnline::CollectGifts.new :server_num => 10, :server_locale => 'en', :win_resize => [1024 + 16, 768], :max_browsers => 1, :empty_screenshot => false
 #t = TankiOnline::CollectGifts.new :server_num => 3, :server_locale => 'ru', :win_resize => [1024 + 16, 768], :max_browsers => 1, :empty_screenshot => false
+#t = TankiOnline::CollectGifts.new :server_num => 10, :server_locale => 'en', :win_resize => [1024 + 16, 768], :max_browsers => 1, :empty_screenshot => false, :collect_mode => :reg, :ref_id => 'FASLPW7G4wuCP0EMI16PG5aQ5ycMmYZqV5l0CS59R5prh9JLcdqcrf5XczAS0xfy'
 
 # do more than once to prevent random errors
 if ARGV.length > 0 && File.exists?(ARGV[0]) && !File.directory?(ARGV[0])
