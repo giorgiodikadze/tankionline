@@ -31,7 +31,7 @@ module TankiOnline
 
   class << self
     def log *args
-      @@logger ||= Logger.new @logName
+      @@logger ||= Logger.new "log/to.log"
       @@logger.send(args.first, args.shift)
     end
   end
@@ -245,6 +245,7 @@ module TankiOnline
             fn = File.join(dir, f)
             img = ChunkyPNG::Image.from_file(fn)
             xp = _img_get_xp(img).to_i
+            #cry = _img_get_cry(img).to_i if true
             img_s = _img_get_status img, :status
             img_c = _img_get_status img, :cry
             next if img_s.nil? or img_c.nil? or img_s.width < 5 or img_c.width < 5 or img_s.height < 9 or img_c.height < 9
@@ -257,6 +258,7 @@ module TankiOnline
             img.crop!(2, 3, img.width - 2 - 1, img.height - 3 - 3)
             images << img
             images_xp[xp] << img
+            #puts "#{f}: #{xp} xp, #{cry} cry"
           rescue
             puts "Rescued handling #{f}: #{$!}\n#{$@}"
           end
@@ -1150,11 +1152,11 @@ module TankiOnline
     end
 
     def i img
-      Images::_img_get_gift img
+      #Images::_img_get_gift img
       #br = @brs.first
       #[_img_get_xp(img), _img_get_cry(img)]
-      #r = [_img_get_xp(img), _img_get_cry(img)]
-      #br._img_status_read_prepare(img).save('st.png')
+      Images::_img_status_read_prepare(img.dup).save('st.png')
+      [Images::_img_get_xp(img), Images::_img_get_cry(img)]
       #br._img_get_status(img).save("st.png")
       #br._img_get_vk_ready(img)
       #r
