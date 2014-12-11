@@ -30,34 +30,272 @@ module TankiOnline
   require 'thread'
 
   class << self
-    def _load_subimages prefix, list
-      out = {}
-      # 
-      list.each do |item|
-        if item.is_a? Hash
-          #puts item.to_a.inspect
-          name = item.to_a[0][0]
-          char = item.to_a[0][1]
-        else
-          name = item
-          char = item
-        end
-        file = File.expand_path(File.join(File.dirname(__FILE__), 'res', "#{prefix}_#{name}.png"))
-        out[char] = ChunkyPNG::Image.from_file(file) #if File.file?(file)
-=begin
-        list2 = Dir.entries(fp).select {|entry| !File.directory? File.join(fp, entry) and !(entry =='.' || entry == '..') and File.extname(entry) == '.png'}
-    list.each do |f|
-      fn = File.join(fp, f)
-      image = ChunkyPNG::Image.from_file(fn)
-      #ud = /^(\S+)_(\d{10,14})/.match(f)
-      #puts ud.inspect
-      puts "#{fn}: #{t.i(image).inspect}"
+    def log *args
+      @@logger ||= Logger.new @logName
+      @@logger.send(args.first, args.shift)
     end
-=end
+  end
+
+  module Images
+    class << self
+      def full_res_path
+        @@full_res_path ||= File.expand_path(File.join(File.dirname(__FILE__), 'res'))
       end
-      out
+
+      def full_res_list
+        fp = full_res_path
+        @@full_res_list ||= Dir.entries(fp).select {|entry| !File.directory? File.join(fp, entry) and !(entry =='.' || entry == '..') and File.extname(entry) == '.png'}
+      end
+
+      def _load_subimages prefix, list
+        out = {}
+
+        #
+        list = [list] unless list.is_a?(Array)
+        list.each do |item|
+          if item.is_a? Hash
+            #puts item.to_a.inspect
+            name = item.to_a[0][0]
+            char = item.to_a[0][1]
+          else
+            name = item
+            char = item
+          end
+
+          mask = "#{prefix}_#{name}"
+          files = full_res_list.select { |entry| entry == "#{mask}.png" or (entry.start_with?("#{mask}_") and entry.end_with?('.png')) }
+
+          unless files.empty?
+            images = []
+
+            files.each do |f|
+              images << ChunkyPNG::Image.from_file(File.expand_path(File.join(full_res_path, f)))
+            end
+
+            #puts "#{char} = #{images.size}"
+            out[char] = images
+          end
+        end
+        out
+      end
+
+      def _find_subimages img, subimages, with_coords = false, single = :single_same_subimage
+        out = []
+        keys = []
+        si = []
+    
+        subimages.each_pair do |k, v|
+          v = [v] unless v.is_a?(Array)
+          v.size.times do 
+            keys << k
+          end
+          si += v
+          #puts v.dimension.inspect
+        end
+        #puts "Search for: #{keys.inspect} (#{si.size} images)"
+    
+        r = ChunkyPNGSubimage::search_subimage(img, si, single)
+        r.each_with_index do |a, i|
+          out << keys[i] unless a.empty?
+          out << a if (with_coords && !a.empty?)
+        end
+        out
+      end
+
+      def _recognize_text img
+        chrs = {}
+        data = _find_subimages img, SUBIMAGES[:char], true, nil
+        #puts data.inspect
+        data.each_slice(2) do |p|
+          c = p[0]
+          a = p[1]
+          a.each do |t|
+            k = t[0]
+            kp = t[0] - 1 # key prev
+            kn = t[0] + 1 # key next
+            if chrs.has_key?(k) && chrs[k] == c
+              TankiOnline.log :debug, "Same place char, #{t} / #{data.inspect}"
+            elsif (chrs.has_key?(kn) && chrs[kn] == c) || (chrs.has_key?(kp) && chrs[kp] == c)
+              TankiOnline.log :debug, "Near character, #{t} / #{data.inspect}"
+            else
+              chrs[t[0]] = c
+            end
+          end
+          #log :debug, data.inspect
+        end
+        #puts chrs.sort.map { |k, v| v.to_s }.join
+        chrs.sort.map { |k, v| v.to_s }.join.split(/[\/:]/)[0]
+      end
+
+      # prepare status window for recognition
+      def _img_status_read_prepare img
+        for x in 0..(img.width - 1)
+          for y in 0..(img.height - 1)
+            c = img.get_pixel(x, y)
+            if ChunkyPNG::Color.r(c) < 32 && ChunkyPNG::Color.b(c) < 32 && ChunkyPNG::Color.g(c) > 128
+              img[x, y] = ChunkyPNG::Color::WHITE
+            else
+              img[x, y] = ChunkyPNG::Color::BLACK
+            end
+          end
+        end
+        img
+      end
+    
+      # get image for the status + crystall bars
+      def _img_get_status img, mode = :both
+        w = img.width
+        h = img.height
+        ya = 0
+        xc = w / 4
+        # find status bar
+        while ya < 50 && ya < h do
+          c = img.get_pixel(xc, ya)
+          break if ChunkyPNG::Color.grayscale?(c) && ChunkyPNG::Color.a(c) == 255 && ChunkyPNG::Color.r(c) > 96
+          ya += 1
+        end
+        yb = ya + 10
+        while yb < 64 && yb < h do
+          c = img.get_pixel(xc, yb)
+          #puts "xc #{xc}, ya #{ya}, yb #{yb}, c #{c}"
+          break if ChunkyPNG::Color.grayscale?(c) && ChunkyPNG::Color.a(c) == 255 && ChunkyPNG::Color.r(c) > 96
+          yb += 1
+        end
+    
+        xa = xc - 1
+        while xa > 0 do
+          c = img.get_pixel(xa, ya)
+          break unless ChunkyPNG::Color.grayscale?(c) && ChunkyPNG::Color.a(c) == 255 && ChunkyPNG::Color.r(c) > 96
+          xa -= 1
+        end
+        xb = xc + 1
+        while xb < w do
+          c = img.get_pixel(xb, ya)
+          break unless ChunkyPNG::Color.grayscale?(c) && ChunkyPNG::Color.a(c) == 255 && ChunkyPNG::Color.r(c) > 96
+          xb += 1
+        end
+    
+        if mode == :both || mode == :cry
+          # also add crystall window
+          # empty space
+          while xb < w do
+            c = img.get_pixel(xb, ya)
+            break if ChunkyPNG::Color.grayscale?(c) && ChunkyPNG::Color.a(c) == 255 && ChunkyPNG::Color.r(c) > 96
+            xb += 1
+          end
+    
+          xa = xb if mode == :cry
+    
+          # crystall bar
+          while xb < w do
+            c = img.get_pixel(xb, ya)
+            break unless ChunkyPNG::Color.grayscale?(c) && ChunkyPNG::Color.a(c) == 255 && ChunkyPNG::Color.r(c) > 96
+            xb += 1
+          end
+          xb += 1 unless xb == w
+        end
+    
+        #puts "#{mode.inspect} #{xa},#{ya},#{xb},#{yb}"
+        img.crop(xa, ya, xb - xa,  yb - ya)
+      end
+
+      def _img_get_xp img
+        ti = _img_status_read_prepare(_img_get_status img, :status)
+        #ti.save 'st.png'
+        _recognize_text(ti)
+      end
+    
+      def _img_get_cry img
+        ti = _img_status_read_prepare(_img_get_status img, :cry)
+        #ti.save 'cry.png'
+        _recognize_text(ti)
+      end
+    
+      def _img_get_gift img
+        gifts = {}
+        data = _find_subimages img, SUBIMAGES[:gift], true
+        # handle to be sure that the order is a proper one
+        data.each_slice(2) do |p|
+          c = p[0]
+          a = p[1]
+          a.each do |t|
+            k = t[0]
+            gifts[k] = c
+          end
+        end
+        out = []
+        gifts.sort.each do |m| 
+          out << m[1]
+        end
+        out
+      end
+
+      def _img_get_vk_ready img
+        data = _find_subimages img, SUBIMAGES[:vk_ready], true
+        #puts data.inspect
+        !data.empty?
+      end
+
+      def _combine_statuses dir='screenshots/status'
+        list = Dir.entries(dir).select {|entry| !File.directory? File.join(dir, entry) and !(entry =='.' || entry == '..') and File.extname(entry) == '.png'}
+        images = []
+        images_xp = Hash.new { |h, k| h[k] = [] }
+        list.each do |f|
+          begin
+            fn = File.join(dir, f)
+            img = ChunkyPNG::Image.from_file(fn)
+            xp = _img_get_xp(img).to_i
+            img_s = _img_get_status img, :status
+            img_c = _img_get_status img, :cry
+            next if img_s.nil? or img_c.nil? or img_s.width < 5 or img_c.width < 5 or img_s.height < 9 or img_c.height < 9
+            img_s.crop!(1, 0, img_s.width - 2, img_s.height)
+            img_c.crop!(1, 0, img_c.width - 2, img_c.height)
+            img_both = ChunkyPNG::Image.new(img_s.width + img_c.width, [img_s.height, img_c.height].max)
+            img_both.compose!(img_s, 0, 0)
+            img_both.compose!(img_c, img_s.width - 1, 0)
+            img = img_both
+            img.crop!(2, 3, img.width - 2 - 1, img.height - 3 - 3)
+            images << img
+            images_xp[xp] << img
+          rescue
+            puts "Rescued handling #{f}: #{$!}\n#{$@}"
+          end
+        end
+        w = 0
+        h = 0
+        images.each do |img|
+          w = img.width if img.width > w
+          h += img.height
+        end
+        puts "Combined statuses #{w}x#{h}"
+        global = ChunkyPNG::Image.new(w, h, ChunkyPNG::Color::TRANSPARENT)
+        h = 0
+        images.each do |img|
+          global.compose!(img, 0, h)
+          h += img.height
+        end
+        global.save('_.png')
+        # xp
+        global = ChunkyPNG::Image.new(w, h, ChunkyPNG::Color::TRANSPARENT)
+        h = 0
+        order = images_xp.keys.sort
+        order.each do |k|
+          arr = images_xp[k]
+          arr.each do |img|
+            global.compose!(img, 0, h)
+            h += img.height
+          end
+        end
+        global.save('__.png')
+      end
+
     end
 
+    SUBIMAGES = {
+      :gift => Images._load_subimages("gift", ["pro", "cry", "dcc", "exp", "da", "dd", "mine", "nitro", "aid"]),
+      :char => Images._load_subimages("chr", [{"sep" => "/"}, {"colon" => ":"}, "0", "1", "2", "3", "4", "5", "6", "7", "8", "9"]),
+      :vk_ready => Images._load_subimages("vk", ["gift_cry", "icon_friends"]),#, "icon_friends_dark"]),
+    }
   end
 
   class Browser
@@ -65,11 +303,6 @@ module TankiOnline
       :default => "http://tankionline.com/battle-%s.html#/server=%s%d",
       :br => "http://tankionline.com.br/battle.html#/server=PT%d",
       :cn => "http://3dtank.com/battle-%s%d.html"
-    }
-    SUBIMAGES = {
-      :gift => TankiOnline::_load_subimages("gift", ["pro", "cry", "dcc", "exp", "da", "dd", "mine", "nitro", "aid"]),
-      :char => TankiOnline::_load_subimages("chr", [{"sep" => "/"}, {"colon" => ":"}, "0", "1", "2", "3", "4", "5", "6", "7", "8", "9"]),
-      :vk_ready => TankiOnline::_load_subimages("vk", ["gift_cry", "icon_friends"]),#, "icon_friends_dark"]),
     }
     WAIT_LOGIN_PAGE_STARTED = 1
     WAIT_LOGIN_PAGE_LOADED = 60*3
@@ -343,7 +576,7 @@ module TankiOnline
         next_status = :vk_add_login2
       when :vk_add_login2
         @screenshot = _screenshot_chunky
-        if _img_get_vk_ready(@screenshot)
+        if Images::_img_get_vk_ready(@screenshot)
           next_status = :vk_add_login3
         elsif _wait_done?
           next_status = :abort
@@ -382,10 +615,6 @@ module TankiOnline
       end
       
       _change_status(next_status) unless next_status.nil?
-    end
-
-    def combine_statuses
-      _combine_statuses
     end
 
     def user_done?
@@ -581,7 +810,7 @@ module TankiOnline
       fn = _screenshot_file(user, true, subfolder)
       if img
         if popup_only
-          popup = _img_get_popup(img)
+          popup = Images::_img_get_popup(img)
         else
           popup = img
         end
@@ -595,7 +824,7 @@ module TankiOnline
 
     def _screenshot_status_save user, img
       fn = _screenshot_file(user, false, "status")
-      _img_get_status(img).save("#{fn}.png")
+      Images::_img_get_status(img).save("#{fn}.png")
       #w = img.width - 500
       #w = img.width / 2 if w < img.width / 2
       #img.crop(0, 0, w, 32).save("#{fn}.png")
@@ -660,7 +889,7 @@ module TankiOnline
     def _handle_popup img
       @logger.debug "Handle popup"
       gifts = []
-      gift = _img_get_gift img
+      gift = Images::_img_get_gift img
       unless gift.empty?
         @logger.debug "Gift found: #{gift}"
         _screenshot_save @user, img, 'gift'
@@ -680,9 +909,9 @@ module TankiOnline
       st = false # status is parsed
       unless img.nil?
         _screenshot_status_save(@user, img)
-        xp = _img_get_xp(img)
+        xp = Images::_img_get_xp(img)
         @userXP = xp
-        cry = _img_get_cry(img)
+        cry = Images::_img_get_cry(img)
         @userCry = cry
         st = true unless (xp.nil?  && cry.nil?)
         gifts = @userGifts
@@ -701,132 +930,6 @@ module TankiOnline
         end
         puts "#{@user}, #{date}, xp #{xp}, cry #{cry}, gifts #{gifts.join(':').upcase}"
       end
-    end
-
-    def _combine_statuses
-      dir = File.dirname(_screenshot_file('_', false, "status"))
-      list = Dir.entries(dir).select {|entry| !File.directory? File.join(dir, entry) and !(entry =='.' || entry == '..') and File.extname(entry) == '.png'}
-      images = []
-      images_xp = Hash.new { |h, k| h[k] = [] }
-      list.each do |f|
-        begin
-          fn = File.join(dir, f)
-          img = ChunkyPNG::Image.from_file(fn)
-          xp = _img_get_xp(img).to_i
-          img_s = _img_get_status img, :status
-          img_c = _img_get_status img, :cry
-          next if img_s.nil? or img_c.nil? or img_s.width < 5 or img_c.width < 5 or img_s.height < 9 or img_c.height < 9
-          img_s.crop!(1, 0, img_s.width - 2, img_s.height)
-          img_c.crop!(1, 0, img_c.width - 2, img_c.height)
-          img_both = ChunkyPNG::Image.new(img_s.width + img_c.width, [img_s.height, img_c.height].max)
-          img_both.compose!(img_s, 0, 0)
-          img_both.compose!(img_c, img_s.width - 1, 0)
-          img = img_both
-          img.crop!(2, 3, img.width - 2 - 1, img.height - 3 - 3)
-          images << img
-          images_xp[xp] << img
-        rescue
-          puts "Rescued handling #{f}: #{$!}\n#{$@}"
-        end
-      end
-      w = 0
-      h = 0
-      images.each do |img|
-        w = img.width if img.width > w
-        h += img.height
-      end
-      puts "Combined statuses #{w}x#{h}"
-      global = ChunkyPNG::Image.new(w, h, ChunkyPNG::Color::TRANSPARENT)
-      h = 0
-      images.each do |img|
-        global.compose!(img, 0, h)
-        h += img.height
-      end
-      global.save('_.png')
-      # xp
-      global = ChunkyPNG::Image.new(w, h, ChunkyPNG::Color::TRANSPARENT)
-      h = 0
-      order = images_xp.keys.sort
-      order.each do |k|
-        arr = images_xp[k]
-        arr.each do |img|
-          global.compose!(img, 0, h)
-          h += img.height
-        end
-      end
-      global.save('__.png')
-    end
-
-    # prepare status window for recognition
-    def _img_status_read_prepare img
-      for x in 0..(img.width - 1)
-        for y in 0..(img.height - 1)
-          c = img.get_pixel(x, y)
-          if ChunkyPNG::Color.r(c) < 32 && ChunkyPNG::Color.b(c) < 32 && ChunkyPNG::Color.g(c) > 128
-            img[x, y] = ChunkyPNG::Color::WHITE
-          else
-            img[x, y] = ChunkyPNG::Color::BLACK
-          end
-        end
-      end
-      img
-    end
-
-    # get image for the status + crystall bars
-    def _img_get_status img, mode = :both
-      w = img.width
-      h = img.height
-      ya = 0
-      xc = w / 4
-      # find status bar
-      while ya < 50 && ya < h do
-        c = img.get_pixel(xc, ya)
-        break if ChunkyPNG::Color.grayscale?(c) && ChunkyPNG::Color.a(c) == 255 && ChunkyPNG::Color.r(c) > 96
-        ya += 1
-      end
-      yb = ya + 10
-      while yb < 64 && yb < h do
-        c = img.get_pixel(xc, yb)
-        #puts "xc #{xc}, ya #{ya}, yb #{yb}, c #{c}"
-        break if ChunkyPNG::Color.grayscale?(c) && ChunkyPNG::Color.a(c) == 255 && ChunkyPNG::Color.r(c) > 96
-        yb += 1
-      end
-
-      xa = xc - 1
-      while xa > 0 do
-        c = img.get_pixel(xa, ya)
-        break unless ChunkyPNG::Color.grayscale?(c) && ChunkyPNG::Color.a(c) == 255 && ChunkyPNG::Color.r(c) > 96
-        xa -= 1
-      end
-      xb = xc + 1
-      while xb < w do
-        c = img.get_pixel(xb, ya)
-        break unless ChunkyPNG::Color.grayscale?(c) && ChunkyPNG::Color.a(c) == 255 && ChunkyPNG::Color.r(c) > 96
-        xb += 1
-      end
-
-      if mode == :both || mode == :cry
-        # also add crystall window
-        # empty space
-        while xb < w do
-          c = img.get_pixel(xb, ya)
-          break if ChunkyPNG::Color.grayscale?(c) && ChunkyPNG::Color.a(c) == 255 && ChunkyPNG::Color.r(c) > 96
-          xb += 1
-        end
-
-        xa = xb if mode == :cry
-
-        # crystall bar
-        while xb < w do
-          c = img.get_pixel(xb, ya)
-          break unless ChunkyPNG::Color.grayscale?(c) && ChunkyPNG::Color.a(c) == 255 && ChunkyPNG::Color.r(c) > 96
-          xb += 1
-        end
-        xb += 1 unless xb == w
-      end
-
-      #puts "#{mode.inspect} #{xa},#{ya},#{xb},#{yb}"
-      img.crop(xa, ya, xb - xa,  yb - ya)
     end
 
     def _img_get_popup img
@@ -906,88 +1009,6 @@ module TankiOnline
       end
       r
     end
-
-    def _find_subimages img, subimages, with_coords = false, single = :single_same_subimage
-      out = []
-      keys = []
-      si = []
-
-      subimages.each_pair do |k, v|
-        keys << k
-        si << v
-        #puts v.dimension.inspect
-      end
-      #puts "Search for: #{keys.inspect}"
-
-      r = ChunkyPNGSubimage::search_subimage(img, si, single)
-      r.each_with_index do |a, i|
-        out << keys[i] unless a.empty?
-        out << a if (with_coords && !a.empty?)
-      end
-      out
-    end
-
-    def _recognize_text img
-      chrs = {}
-      data = _find_subimages img, SUBIMAGES[:char], true, nil
-      #puts data.inspect
-      data.each_slice(2) do |p|
-        c = p[0]
-        a = p[1]
-        a.each do |t|
-          k = t[0]
-          kp = t[0] - 1 # key prev
-          kn = t[0] + 1 # key next
-          if chrs.has_key?(k) && chrs[k] == c
-            @logger.debug "Same place char, #{t} / #{data.inspect}"
-          elsif (chrs.has_key?(kn) && chrs[kn] == c) || (chrs.has_key?(kp) && chrs[kp] == c)
-            @logger.debug "Near character, #{t} / #{data.inspect}"
-          else
-            chrs[t[0]] = c
-          end
-        end
-        #@logger.debug data.inspect
-      end
-      #puts chrs.sort.map { |k, v| v.to_s }.join
-      chrs.sort.map { |k, v| v.to_s }.join.split(/[\/:]/)[0]
-    end
-
-    def _img_get_xp img
-      ti = _img_status_read_prepare(_img_get_status img, :status)
-      #ti.save 'st.png'
-      _recognize_text(ti)
-    end
-
-    def _img_get_cry img
-      ti = _img_status_read_prepare(_img_get_status img, :cry)
-      #ti.save 'cry.png'
-      _recognize_text(ti)
-    end
-
-    def _img_get_gift img
-      gifts = {}
-      data = _find_subimages img, SUBIMAGES[:gift], true
-      # handle to be sure that the order is a proper one
-      data.each_slice(2) do |p|
-        c = p[0]
-        a = p[1]
-        a.each do |t|
-          k = t[0]
-          gifts[k] = c
-        end
-      end
-      out = []
-      gifts.sort.each do |m| 
-        out << m[1]
-      end
-      out
-    end
-
-    def _img_get_vk_ready img
-      data = _find_subimages img, SUBIMAGES[:vk_ready], true
-      #puts data.inspect
-      !data.empty?
-    end
   end
 
   class CollectGifts
@@ -999,9 +1020,6 @@ module TankiOnline
       @collectMode = params.fetch(:collect_mode, :collect)
 
       # start browser
-      x0 = 0
-      x0 = -224 if @maxBrowsers == 2
-      x0 = -768 if @maxBrowsers >= 3
       @brs = []
 
       # other params
@@ -1013,6 +1031,10 @@ module TankiOnline
 
     def init_browsers
       return unless @brs.empty?
+      x0 = 0
+      x0 = -224 if @maxBrowsers == 2
+      x0 = -768 if @maxBrowsers >= 3
+      params = @brParams.dup
       @maxBrowsers.times do
         params[:win_move] = [x0, -10] unless params.has_key? :win_move
         @brs << Browser.new(params)
@@ -1022,7 +1044,7 @@ module TankiOnline
     private :init_browsers
 
     def finish
-      @brs[0].combine_statuses
+      TankiOnline::Images::_combine_statuses
       @brs.each do |br|
         br.finish
       end
@@ -1128,8 +1150,8 @@ module TankiOnline
     end
 
     def i img
-      br = @brs.first
-      br._img_get_gift img
+      Images::_img_get_gift img
+      #br = @brs.first
       #[_img_get_xp(img), _img_get_cry(img)]
       #r = [_img_get_xp(img), _img_get_cry(img)]
       #br._img_status_read_prepare(img).save('st.png')
@@ -1168,6 +1190,13 @@ module TankiOnline
 end
 
 Thread.abort_on_exception = true
+
+
+#TankiOnline::Images::_load_subimages "vk", ["gift_cry"]
+#TankiOnline::Images._find_subimages nil, (TankiOnline::Images::SUBIMAGES[:char])
+#TankiOnline::Images::_combine_statuses
+
+#zzzzz
 #sleep ( 2 * 60 - 15 ) * 60
 #t = TankiOnline::CollectGifts.new :server_num => 12, :server_locale => 'ru', :win_resize => [1024 + 16, 768], :max_browsers => 1, :empty_screenshot => false, :collect_mode => :vk_add
 #t = TankiOnline::CollectGifts.new :server_num => 40, :server_locale => 'en', :win_resize => [1024 + 16, 768], :max_browsers => 3, :empty_screenshot => false
