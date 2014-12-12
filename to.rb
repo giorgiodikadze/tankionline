@@ -291,6 +291,73 @@ module TankiOnline
         global.save('__.png')
       end
 
+      def _img_get_popup img
+        w = img.width
+        h = img.height
+        y = h / 2
+        xc = w / 2
+        ce = ChunkyPNG::Color.rgb(163, 163, 163)
+        xb = 0
+        for x in xc..(w-1)
+          if (img.get_pixel(x, y) == ce) && (img.get_pixel(x, y - 1) == ce) && (img.get_pixel(x, y + 1) == ce) && (img.get_pixel(x, y - 2) == ce) && (img.get_pixel(x, y + 2) == ce)
+            xb = x
+            break
+          end
+        end
+        ya = y - 2
+        while y > 0 && img.get_pixel(xb, ya) == ce do
+          ya -= 1
+        end
+        yb = y + 2
+        while y < h && img.get_pixel(xb, yb) == ce do
+          yb += 1
+        end
+        xa = xc - (xb - xc)
+        TankiOnline.log :debug, "Popup #{xa},#{ya},#{xb},#{yb} (img #{w}x#{h})"
+        #d = 5
+        #ya -= d - 1
+        #yb += d
+        xw = xb - xa
+        yh = yb - ya
+        if xa >= 0 && xa < w && ya >= 0 && ya < h && xa + xw > 0 && xa + xw < w && ya + yh > 0 && ya + yh < h
+          img.crop(xa, ya, xw,  yh)
+        else
+          TankiOnline.log :debug, "Popup #{xa},#{ya},#{xb},#{yb} - does not fit to original image"
+          nil
+        end
+      end
+    
+      def _img_check img, wfa, wfb, hfa, hfb, &blk
+        # conditions check
+        wf = [0, wfa, wfb, 100].sort
+        wfa = wf[1].to_f / 100
+        wfb = wf[2].to_f / 100
+        hf = [0, hfa, hfb, 100].sort
+        hfa = hf[1].to_f / 100
+        hfb = hf[2].to_f / 100
+    
+        # initial data
+        w = img.width
+        h = img.height
+        xa = (w * wfa).to_i
+        xb = (w * wfb).to_i
+        ya = (h * hfa).to_i
+        yb = (h * hfb).to_i
+    
+        #@logger.debug "Check #{xa} #{xb} #{ya} #{yb}"
+        r = false
+        for y in ya..(yb - 1)
+          for x in xa..(xb - 1)
+            c = img.get_pixel(x, y)
+            r = blk.call(c)
+            #@logger.debug "Check coord #{x} #{y} color #{c} r #{r}"
+            break if r
+          end
+          break if r
+        end
+        r
+      end
+
     end
 
     SUBIMAGES = {
@@ -404,7 +471,7 @@ module TankiOnline
         @screenshot = _screenshot_chunky
         next_status = :login_dialog_wait3
       when :login_dialog_wait3
-        r = _img_check(@screenshot, 34, 66, 34, 66) { |c|
+        r = Images::_img_check(@screenshot, 34, 66, 34, 66) { |c|
            c == ChunkyPNG::Color::WHITE
         }
         if r
@@ -493,7 +560,7 @@ module TankiOnline
         next_status = :main_page_wait3
       when :main_page_wait3
         # login page has white
-        r = _img_check(@screenshot, 75, 100, 34, 66) { |c|
+        r = Images::_img_check(@screenshot, 75, 100, 34, 66) { |c|
           c == ChunkyPNG::Color::WHITE || c == ChunkyPNG::Color.rgb(127, 127, 127)
         }
         if r
@@ -875,7 +942,7 @@ module TankiOnline
     # possible notifications
     def _check_main_page_popup? img
       # check is any popup shown on the main page?
-      r = _img_check(img, 75, 100, 34, 66) { |c|
+      r = Images::_img_check(img, 75, 100, 34, 66) { |c|
         c == ChunkyPNG::Color::WHITE
       }
       # white should exist if not popup
@@ -932,73 +999,6 @@ module TankiOnline
         end
         puts "#{@user}, #{date}, xp #{xp}, cry #{cry}, gifts #{gifts.join(':').upcase}"
       end
-    end
-
-    def _img_get_popup img
-      w = img.width
-      h = img.height
-      y = h / 2
-      xc = w / 2
-      ce = ChunkyPNG::Color.rgb(163, 163, 163)
-      xb = 0
-      for x in xc..(w-1)
-        if (img.get_pixel(x, y) == ce) && (img.get_pixel(x, y - 1) == ce) && (img.get_pixel(x, y + 1) == ce) && (img.get_pixel(x, y - 2) == ce) && (img.get_pixel(x, y + 2) == ce)
-          xb = x
-          break
-        end
-      end
-      ya = y - 2
-      while y > 0 && img.get_pixel(xb, ya) == ce do
-        ya -= 1
-      end
-      yb = y + 2
-      while y < h && img.get_pixel(xb, yb) == ce do
-        yb += 1
-      end
-      xa = xc - (xb - xc)
-      @logger.debug "Popup #{xa},#{ya},#{xb},#{yb} (img #{w}x#{h})"
-      #d = 5
-      #ya -= d - 1
-      #yb += d
-      xw = xb - xa
-      yh = yb - ya
-      if xa >= 0 && xa < w && ya >= 0 && ya < h && xa + xw > 0 && xa + xw < w && ya + yh > 0 && ya + yh < h
-        img.crop(xa, ya, xw,  yh)
-      else
-        @logger.debug "Popup #{xa},#{ya},#{xb},#{yb} - does not fit to original image"
-        nil
-      end
-    end
-
-    def _img_check img, wfa, wfb, hfa, hfb, &blk
-      # conditions check
-      wf = [0, wfa, wfb, 100].sort
-      wfa = wf[1].to_f / 100
-      wfb = wf[2].to_f / 100
-      hf = [0, hfa, hfb, 100].sort
-      hfa = hf[1].to_f / 100
-      hfb = hf[2].to_f / 100
- 
-      # initial data
-      w = img.width
-      h = img.height
-      xa = (w * wfa).to_i
-      xb = (w * wfb).to_i
-      ya = (h * hfa).to_i
-      yb = (h * hfb).to_i
-
-      #@logger.debug "Check #{xa} #{xb} #{ya} #{yb}"
-      r = false
-      for y in ya..(yb - 1)
-        for x in xa..(xb - 1)
-          c = img.get_pixel(x, y)
-          r = blk.call(c)
-          #@logger.debug "Check coord #{x} #{y} color #{c} r #{r}"
-          break if r
-        end
-        break if r
-      end
-      r
     end
 
     # try to do block with auto sleeps
