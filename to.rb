@@ -32,7 +32,7 @@ module TankiOnline
   class << self
     def log *args
       @@logger ||= Logger.new "log/to.log"
-      @@logger.send(args.first, args.shift)
+      @@logger.send(args.shift, *args)
     end
   end
 
@@ -245,7 +245,7 @@ module TankiOnline
             fn = File.join(dir, f)
             img = ChunkyPNG::Image.from_file(fn)
             xp = _img_get_xp(img).to_i
-            #cry = _img_get_cry(img).to_i if true
+            cry = _img_get_cry(img).to_i
             img_s = _img_get_status img, :status
             img_c = _img_get_status img, :cry
             next if img_s.nil? or img_c.nil? or img_s.width < 5 or img_c.width < 5 or img_s.height < 9 or img_c.height < 9
@@ -257,7 +257,7 @@ module TankiOnline
             img = img_both
             img.crop!(2, 3, img.width - 2 - 1, img.height - 3 - 3)
             images << img
-            images_xp[xp] << img
+            images_xp[xp] << [cry, img]
             #puts "#{f}: #{xp} xp, #{cry} cry"
           rescue
             puts "Rescued handling #{f}: #{$!}\n#{$@}"
@@ -281,8 +281,19 @@ module TankiOnline
         global = ChunkyPNG::Image.new(w, h, ChunkyPNG::Color::TRANSPARENT)
         h = 0
         order = images_xp.keys.sort
+        #TankiOnline.log :debug, "All hps: #{order.inspect}"
         order.each do |k|
-          arr = images_xp[k]
+          #puts "hp: #{k.inspect}"
+          arr2 = images_xp[k].sort { |a, b| 
+            # a and b, and return -1, when a follows b, 0 when a and b are equivalent, or +1 if b follows a.
+            a[0] < b[0] ? -1 : (a[0] > b[0] ? 1 : 0)
+          }
+          arr = []
+          arr2.each do |a|
+            #print "#{a[0]}, "
+            arr << a[1]
+          end
+          #puts
           arr.each do |img|
             global.compose!(img, 0, h)
             h += img.height
