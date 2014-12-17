@@ -451,7 +451,11 @@ module TankiOnline
       _clear_user_data
       _init_user_data user, password, params
 
-      _change_status :login
+      if mode == :forum_login
+        _change_status :forum_login
+      else
+        _change_status :login
+      end
 
       @logger.info "Start to do '#{mode}' for user: #{user}"
     end
@@ -681,6 +685,47 @@ module TankiOnline
         next_status = _wait_step(:idle, WAIT_LOGOUT_BROWSER_IDLE) {
           _browser_ready?
         }
+      when :forum_login
+        #@br.goto 'about:'
+        #@br.cookies.add 'tru_guestSkinChoice', '2', :path=>"/", :domain=>".tankiforum.com", :expires=>nil, :secure=>false
+        @br.goto 'http://ru.tankiforum.com'
+        @br.wait
+        #puts @br.cookies.to_a.inspect
+        @br.link(:text, 'IP.Board Mobile').fire_event('onclick') if @br.link(:text, 'IP.Board Mobile').exists?
+        #sleep 1
+        @br.wait
+        @br.link(:text, 'Tanki Online Forum').wait_until_present
+        #@br.link(:id, 'sign_in').click
+        while true do
+          @br.goto 'http://ru.tankiforum.com/index.php?app=core&module=global&section=login'
+          @br.wait
+          @br.text_field(:name, 'ips_username').wait_until_present
+          sleep 0.2
+          @br.text_field(:name, 'ips_username').set(@user)
+          @br.text_field(:name, 'ips_password').set(@userPassword)
+          @br.checkbox(:name, 'rememberMe').set
+          @br.wait
+          sleep 0.5
+          #@br.link(:id, 'recaptcha_reload_btn').click
+          @br.image(:id, 'recaptcha_reload').fire_event('onclick')
+          @br.wait
+          sleep 0.5
+          @br.wait
+          while true do
+            el2 = @br.checkbox(:name, 'rememberMe')
+            break unless el2.exists?
+            el1 = @br.div(:class, 'row message error')
+            break if el1.exists?
+          end
+          break unless @br.div(:class, 'row message error').exists?
+        end
+        @br.wait
+        @br.link(:text, 'Tanki Online Forum').wait_until_present
+        @br.wait
+        puts @br.link(:href, /=logout/).attribute_value('href')
+        puts @br.cookies.to_a.inspect
+        @br.link(:href, /=logout/).fire_event('onclick')
+        next_status = :idle
       when :wait_do
         next_status = @wait_next_status if _wait_done?
       when :idle
@@ -1024,7 +1069,36 @@ module TankiOnline
     end
   end
 
+  module UserList
+    def load_users fn
+      lines = File.readlines(fn)
+      #lines.shuffle!
+      lines.each do |line|
+        line.strip!
+        next if line.empty?
+        next if ((line[0] == '#') || (line[0] == ';'))
+        values = line.strip.split(':')
+        user = values[0].strip
+        p = values[1].strip
+        params = {}
+        params[:email] = values[2].strip if values.length > 2
+        params[:locale] = values[3].strip if values.length > 3
+        if @logins.fetch(user, nil)
+          @logger.warn "Skip '#{user}' as already handled"
+          next
+        end
+        #puts "User: #{user} (#{current_num})"
+        @logins[user] = [p, params, 0]
+      end
+      @logger.debug "Users to load: #{@logins.keys.inspect}"
+      @logins
+    end
+
+  end
+
   class CollectGifts
+    include UserList
+
     def initialize params={}
       # parse parameters
       @brParams = params
@@ -1061,30 +1135,6 @@ module TankiOnline
       @brs.each do |br|
         br.finish
       end
-    end
-
-    def load_users fn
-      lines = File.readlines(fn)
-      #lines.shuffle!
-      lines.each do |line|
-        line.strip!
-        next if line.empty?
-        next if ((line[0] == '#') || (line[0] == ';'))
-        values = line.strip.split(':')
-        user = values[0].strip
-        p = values[1].strip
-        params = {}
-        params[:email] = values[2].strip if values.length > 2
-        params[:locale] = values[3].strip if values.length > 3
-        if @logins.fetch(user, nil)
-          @logger.warn "Skip '#{user}' as already handled"
-          next
-        end
-        #puts "User: #{user} (#{current_num})"
-        @logins[user] = [p, params, 0]
-      end
-      @logger.debug "Users to load: #{@logins.keys.inspect}"
-      @logins
     end
 
     # collect user list from file
@@ -1213,9 +1263,10 @@ Thread.abort_on_exception = true
 #sleep ( 2 * 60 - 15 ) * 60
 #t = TankiOnline::CollectGifts.new :server_num => 12, :server_locale => 'ru', :win_resize => [1024 + 16, 768], :max_browsers => 1, :empty_screenshot => false, :collect_mode => :vk_add
 #t = TankiOnline::CollectGifts.new :server_num => 40, :server_locale => 'en', :win_resize => [1024 + 16, 768], :max_browsers => 3, :empty_screenshot => false
-t = TankiOnline::CollectGifts.new :server_num => 10, :server_locale => 'en', :win_resize => [1024 + 16, 768], :max_browsers => 1, :empty_screenshot => false
+#t = TankiOnline::CollectGifts.new :server_num => 10, :server_locale => 'en', :win_resize => [1024 + 16, 768], :max_browsers => 1, :empty_screenshot => false
 #t = TankiOnline::CollectGifts.new :server_num => 3, :server_locale => 'ru', :win_resize => [1024 + 16, 768], :max_browsers => 1, :empty_screenshot => false
 #t = TankiOnline::CollectGifts.new :server_num => 10, :server_locale => 'en', :win_resize => [1024 + 16, 768], :max_browsers => 1, :empty_screenshot => false, :collect_mode => :reg, :ref_id => 'FASLPW7G4wuCP0EMI16PG5aQ5ycMmYZqV5l0CS59R5prh9JLcdqcrf5XczAS0xfy'
+t = TankiOnline::CollectGifts.new :server_num => 10, :server_locale => 'en', :win_resize => [1024 + 16, 768], :max_browsers => 1, :empty_screenshot => false, :collect_mode => :forum_login
 
 # do more than once to prevent random errors
 if ARGV.length > 0 && File.exists?(ARGV[0]) && !File.directory?(ARGV[0])
