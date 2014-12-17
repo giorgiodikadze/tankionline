@@ -237,6 +237,8 @@ module TankiOnline
       end
 
       def _combine_statuses dir='screenshots/status'
+        total_xp = 0
+        total_cry = 0
         list = Dir.entries(dir).select {|entry| !File.directory? File.join(dir, entry) and !(entry =='.' || entry == '..') and File.extname(entry) == '.png'}
         images = []
         images_xp = Hash.new { |h, k| h[k] = [] }
@@ -258,6 +260,8 @@ module TankiOnline
             img.crop!(2, 3, img.width - 2 - 1, img.height - 3 - 3)
             images << img
             images_xp[xp] << [cry, img]
+            total_xp += xp.to_i
+            total_cry += cry.to_i
             #puts "#{f}: #{xp} xp, #{cry} cry"
           rescue
             puts "Rescued handling #{f}: #{$!}\n#{$@}"
@@ -269,7 +273,7 @@ module TankiOnline
           w = img.width if img.width > w
           h += img.height
         end
-        puts "Combined statuses #{w}x#{h}"
+        puts "Combined statuses #{w}x#{h} (total xp #{total_xp}, cry #{total_cry})"
         global = ChunkyPNG::Image.new(w, h, ChunkyPNG::Color::TRANSPARENT)
         h = 0
         images.each do |img|
