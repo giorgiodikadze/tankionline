@@ -688,42 +688,78 @@ module TankiOnline
       when :forum_login
         #@br.goto 'about:'
         #@br.cookies.add 'tru_guestSkinChoice', '2', :path=>"/", :domain=>".tankiforum.com", :expires=>nil, :secure=>false
-        @br.goto 'http://ru.tankiforum.com'
-        @br.wait
+        hide_header_script = "var items = document.getElementsByTagName('h1'); for (var i = 0; i < items.length; ++i) { items[i].style['font-size'] = '1%'; }"
+        locale = @serverLocale
+        login_url = "http://#{locale}.tankiforum.com/index.php?app=core&module=global&section=login&do=process"
+        @forum_login_first_run ||= 'yes'
+        #@br.goto 'http://ru.tankiforum.com'
+        #@br.wait
+        #@br.execute_script remove_images_script
         #puts @br.cookies.to_a.inspect
-        @br.link(:text, 'IP.Board Mobile').fire_event('onclick') if @br.link(:text, 'IP.Board Mobile').exists?
+        #@br.link(:text, 'IP.Board Mobile').fire_event('onclick') if @br.link(:text, 'IP.Board Mobile').exists?
         #sleep 1
-        @br.wait
-        @br.link(:text, 'Tanki Online Forum').wait_until_present
+        #@br.wait
+        #@br.link(:text, 'Tanki Online Forum').wait_until_present
         #@br.link(:id, 'sign_in').click
         while true do
-          @br.goto 'http://ru.tankiforum.com/index.php?app=core&module=global&section=login'
+          @br.goto login_url
           @br.wait
+          #puts @br.cookies.to_a.inspect
+          @br.execute_script hide_header_script
+          #@br.link(:id, 'sign_in').click
+          #@br.wait
+          #@br.execute_script remove_images_script
           @br.text_field(:name, 'ips_username').wait_until_present
-          sleep 0.2
+          #sleep 0.2
           @br.text_field(:name, 'ips_username').set(@user)
           @br.text_field(:name, 'ips_password').set(@userPassword)
           @br.checkbox(:name, 'rememberMe').set
           @br.wait
-          sleep 0.5
+          @br.text_field(:name, 'recaptcha_response_field').focus
+          @br.wait
+          sleep 0.2
           #@br.link(:id, 'recaptcha_reload_btn').click
-          @br.image(:id, 'recaptcha_reload').fire_event('onclick')
-          @br.wait
-          sleep 0.5
-          @br.wait
+          if @forum_login_first_run == 'yes'
+            puts 'first run'
+            @br.image(:id, 'recaptcha_reload').fire_event('onclick') 
+            @br.wait
+            sleep 0.5 
+            @br.wait
+            @forum_login_first_run = 'no'
+          end
           while true do
-            el2 = @br.checkbox(:name, 'rememberMe')
-            break unless el2.exists?
-            el1 = @br.div(:class, 'row message error')
-            break if el1.exists?
+            begin
+              @br.execute_script hide_header_script
+              el2 = @br.checkbox(:name, 'rememberMe')
+              break unless el2.exists?
+              #puts "text: #{@br.text_field(:name, 'ips_username').value}"
+              break if (@br.text_field(:name, 'ips_username').exists? && @br.text_field(:name, 'ips_username').value.strip.empty?)
+              #elerr = @br.div(:class, 'row message error')
+              #break if elerr.exists?
+              #elerr = @br.p(:class, 'message error')
+              #break if elerr.exists?
+              sleep 0.5
+            rescue
+              puts "Exception: #{$!}"
+            end
           end
           break unless @br.div(:class, 'row message error').exists?
         end
         @br.wait
-        @br.link(:text, 'Tanki Online Forum').wait_until_present
+        @br.execute_script hide_header_script
+        Watir::Wait.until { @br.link(:text, 'Tanki Online Forum').exists? }
+        #@br.link(:text, 'Tanki Online Forum').wait_until_present
         @br.wait
-        puts @br.link(:href, /=logout/).attribute_value('href')
-        puts @br.cookies.to_a.inspect
+        k = @br.link(:href, /=logout/).attribute_value('href')
+        k = k.match(/\&k=(.*)/)[1]
+        #puts @br.cookies.to_a.inspect
+        member_id = @br.cookies["t#{locale}_member_id".to_sym][:value]
+        pass_hash = @br.cookies["t#{locale}_pass_hash".to_sym][:value]
+        data = "#{@user}:#{locale}:#{member_id}:#{pass_hash}:#{k}"
+        File.open('forum_info', 'a') { |f| f.write("#{data}\n") }
+        puts data
+        #puts k.inspect
+        #puts @br.cookies.to_a.inspect
         @br.link(:href, /=logout/).fire_event('onclick')
         next_status = :idle
       when :wait_do
@@ -808,6 +844,7 @@ module TankiOnline
       @logger.debug "Create new browser window"
       switches = %w[--disable-popup-blocking --disable-translate --test-type]
       switches = %w[--disable-popup-blocking --disable-translate --test-type --disk-cache-dir=c:\\tmp\\cache]
+      switches += ['--user-agent=Mozilla/5.0 (Linux; Android 4.0.4; Galaxy Nexus Build/IMM76B) AppleWebKit/535.19 (KHTML, like Gecko) Chrome/18.0.1025.133 Mobile Safari/535.19']
       #puts switches.inspect
       @br = Watir::Browser.new :chrome, :switches => switches
       title = "TO" + (0...15).map { ('a'..'z').to_a[rand(26)] }.join
