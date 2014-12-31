@@ -239,6 +239,8 @@ module TankiOnline
       def _combine_statuses dir='screenshots/status'
         total_xp = 0
         total_cry = 0
+        total_xp2 = 0
+        total_cry2 = 0
         list = Dir.entries(dir).select {|entry| !File.directory? File.join(dir, entry) and !(entry =='.' || entry == '..') and File.extname(entry) == '.png'}
         images = []
         images_xp = Hash.new { |h, k| h[k] = [] }
@@ -265,6 +267,8 @@ module TankiOnline
             images_cry[cry] << [xp, img]
             total_xp += xp.to_i
             total_cry += cry.to_i
+            total_xp2 += xp.to_i * xp.to_i
+            total_cry2 += cry.to_i * cry.to_i
             #puts "#{f}: #{xp} xp, #{cry} cry (total #{total_xp} xp, #{total_cry} cry)"
           rescue
             puts "Rescued handling #{f}: #{$!}\n#{$@}"
@@ -276,10 +280,12 @@ module TankiOnline
           w = img.width if img.width > w
           h += img.height
         end
-        puts "Combined statuses #{w}x#{h} (total xp #{total_xp}, cry #{total_cry})"
+        tc = images.length
+        t = "Total accounts #{tc}, xp #{total_xp}, cry #{total_cry}. Average xp #{(total_xp / tc).to_i}, cry #{(total_cry / tc).to_i}. Median xp #{Math.sqrt(total_xp2 / tc).to_i}, cry #{Math.sqrt(total_cry2 / tc).to_i}"
+        puts "Combined statuses #{w}x#{h}. #{t}"
         filename = File.expand_path(File.join(File.dirname(__FILE__), 'to_status.log'))
         File.open(filename, 'a') do |file|
-          file.puts "#{DateTime.now.strftime('%Y%m%d%H%M%S')} Total xp #{total_xp}, cry #{total_cry})"
+          file.puts "#{DateTime.now.strftime('%Y%m%d%H%M%S')} #{t}"
         end
         global = ChunkyPNG::Image.new(w, h, ChunkyPNG::Color::TRANSPARENT)
         h = 0
