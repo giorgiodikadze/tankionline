@@ -421,10 +421,11 @@ module TankiOnline
   end
 
   class Browser
+    URL_SERVER_ARG = "/server=%s%d"
     URL_MASK = {
-      :default => "http://tankionline.com/battle-%s.html#/server=%s%d",
-      :br => "http://tankionline.com.br/battle.html#/server=PT%d",
-      :cn => "http://3dtank.com/battle-%s%d.html"
+      :default => "http://tankionline.com/battle-%s.html#",
+      :br => "http://tankionline.com.br/battle.html#", #/server=PT%d",
+      :cn => "http://3dtank.com/battle-%s%d.html#"
     }
     WAIT_LOGIN_PAGE_STARTED = 1
     WAIT_LOGIN_PAGE_LOADED = 60*3
@@ -450,9 +451,9 @@ module TankiOnline
 
     def initialize params={}
       # parse parameters
-      @serverNum = params.fetch(:server_num, 40)
+      @serverNum = params.fetch(:server_num, 0)
       @serverLocale = params.fetch(:server_locale, "en")
-      @serverTarget = params.fetch(:server_target, "RU")
+      @serverTarget = params.fetch(:server_target, "EN")
       @logName = params.fetch(:log_name, "log/to_browser_#{DateTime.now.strftime('%Y%m%d%H%M%S%L')}.log")
       @winResize = params.fetch(:win_resize, nil)
       @winMove = params.fetch(:win_move, nil)
@@ -495,6 +496,10 @@ module TankiOnline
 
       if mode == :forum_login
         _change_status :forum_login
+      elsif mode == :game_reg
+        _change_status :game_reg
+      elsif mode == :game_enter
+        _change_status :game_enter
       else
         _change_status :login
       end
@@ -647,7 +652,7 @@ module TankiOnline
       when :main_page_no_popups
         _parse_status @screenshot
         case mode
-        when :vk_add, :vk_remove
+        when :vk_add, :vk_remove, :email_add
           next_status = :open_settings
         else
           next_status = :logout
@@ -655,7 +660,31 @@ module TankiOnline
       when :open_settings
         _sleep 5
         _click_mouse 919, 91
-        next_status = _wait_step(:vk_button, 1)
+        case mode
+        when :vk_add, :vk_remove
+          next_status = _wait_step(:vk_button, 1)
+        else
+          next_status = _wait_step(:email_add, 1)
+        end
+      when :email_add
+        _sleep 0.5
+        #_send_keys :tab
+        _send_keys :tab
+        _send_keys :tab
+        _send_keys :tab
+        _send_keys :tab
+        _send_keys :tab
+        _sleep 0.5
+        #_send_keys 'zzzzz'
+        _send_keys @userParams[:email].to_s
+        @br.wait
+        _sleep 5
+        @br.wait
+        _sleep 1
+        _send_keys :enter
+        _sleep 3
+        _send_keys :enter
+        next_status = _wait_step(:logout, 5)
       when :vk_button
         _sleep 2
         _click_mouse 450, 520
@@ -728,6 +757,38 @@ module TankiOnline
         next_status = _wait_step(:idle, WAIT_LOGOUT_BROWSER_IDLE) {
           _browser_ready?
         }
+      when :game_reg
+        @br.cookies.clear
+        _browser_goto 'http://game.tankionline.com/'
+        @br.wait
+        puts "Used name: #{@user.to_s[0,20]}" if @user.to_s[0,20] != @user.to_s
+        @br.div(:id, 'f_reg').text_field(:name, 'login').set(@user.to_s[0,20])
+        @br.div(:id, 'f_reg').button(:class, /send/).click
+        @br.wait
+        w_exists = @br.div(:id, 'f_reg').p(:class => 'warning', :text => 'This nickname has already been registered in THE GAME.').exists?
+        puts "Already exists" if w_exists
+        if !w_exists && @br.div(:id, 'f_reg').p(:class => 'warning').exists?
+          puts @br.div(:id, 'f_reg').p(:class => 'warning').text
+          File.open('game_reg_warn', 'a') do |file|
+            file.puts "#{@user}:#{@userPassword}:#{@userParams[:email].to_s}: #{@br.div(:id, 'f_reg').p(:class => 'warning').text}"
+          end
+        end
+        next_status = :idle
+      when :game_enter
+        @br.cookies.clear
+        _browser_goto 'http://game.tankionline.com/'
+        @br.wait
+        @br.div(:id, 'f_ent').link(:text, /Enter/).click
+        @br.wait
+        puts "Used name: #{@user.to_s[0,20]}" if @user.to_s[0,20] != @user.to_s
+        @br.div(:id, 'f_ent').text_field(:name, 'login').set(@user.to_s[0,20])
+        @br.div(:id, 'f_ent').text_field(:name, 'key').set(@userPassword)
+        @br.div(:id, 'f_ent').button(:class, /send/).click
+        @br.wait
+        @br.text_field(:name, 'word').when_present.set('') # answer
+        @br.button(:class, /send/).click
+        @br.wait
+        next_status = :idle
       when :forum_login
         #@br.goto 'about:'
         #@br.cookies.add 'tru_guestSkinChoice', '2', :path=>"/", :domain=>".tankiforum.com", :expires=>nil, :secure=>false
@@ -1044,24 +1105,38 @@ module TankiOnline
     end
 
     def _screenshot_status_save user, img
-      fn = _screenshot_file(user, false, "status")
-      Images::_img_get_status(img).save("#{fn}.png") if @userParams.fetch(:save_status, true)
-      #w = img.width - 500
-      #w = img.width / 2 if w < img.width / 2
-      #img.crop(0, 0, w, 32).save("#{fn}.png")
-      @logger.warn "Screenshot status '#{fn}' is saved"
+      if @userParams.fetch(:save_status, true)
+        fn = _screenshot_file(user, false, "status")
+        st = Images::_img_get_status(img)
+        wr = true
+        # try to keep the modification date if not updated
+        if File.exists?("#{fn}.png")
+          st_old = ChunkyPNG::Image.from_file("#{fn}.png")
+          wr = (st_old != st)
+          @logger.warn "Old screenshot status '#{fn}' exists, the same: #{!wr}"
+        end
+
+        if wr
+          st.save("#{fn}.png")
+          @logger.warn "Screenshot status '#{fn}' is saved"
+        end
+      end
     end
 
     # get the proper url to the login page
     def _get_login_url params
       locale = params.fetch(:locale, @serverLocale)
+      target = @serverTarget
+      target = 'PT' if locale == 'br'
+      server_arg = ''
+      server_arg = URL_SERVER_ARG % [target, @serverNum] if @serverNum.to_i > 0
       case locale
       when 'br'
-        URL_MASK[:br] % [1]
+        (URL_MASK[:br] % [1]) + server_arg
       when 'cn'
-        URL_MASK[:cn] % ['', 1]
+        (URL_MASK[:cn] % ['', 1]) + server_arg
       else
-        s = URL_MASK[:default] % [@serverLocale, @serverTarget, @serverNum]
+        s = (URL_MASK[:default] % [@serverLocale]) + server_arg
         s = "#{s}&friend=#{@refId}" unless @refId.nil?
         s
       end
@@ -1167,6 +1242,8 @@ module TankiOnline
 
   module UserList
     def load_users fn
+      @logins = {} if @logins.nil?
+
       lines = File.readlines(fn)
       #lines.shuffle!
       lines.each do |line|
@@ -1180,16 +1257,43 @@ module TankiOnline
         params[:email] = values[2].strip if values.length > 2
         params[:locale] = values[3].strip if values.length > 3
         if @logins.fetch(user, nil)
-          @logger.warn "Skip '#{user}' as already handled"
+          @logger.warn "Skip '#{user}' as already handled" unless @logger.nil?
           next
         end
         #puts "User: #{user} (#{current_num})"
         @logins[user] = [p, params, 0]
       end
-      @logger.debug "Users to load: #{@logins.keys.inspect}"
+      @logger.debug "Users to load: #{@logins.keys.inspect}" unless @logger.nil?
       @logins
     end
 
+  end
+
+  class Game
+    include UserList
+
+    def email fn
+      origem = 'tankionline2015multidots@gmail.com'
+      origem_base = origem.split('@').first
+      origem_domain = origem.split('@').last
+      @logger.warn "Emails from file: #{fn}" unless @logger.nil?
+      users = load_users fn
+      ema = []
+      users.each_pair do |k, v|
+        em = v[1][:email]
+        next if em.nil?
+        ema << em.split('@')[0] if em.split('@')[0].tr('.','') == origem_base
+      end
+      puts ema.length
+      [0, 1].repeated_permutation(origem_base.length - 1).each do |a|
+        t = origem_base.dup
+        (origem_base.length - 1).downto(0) do |k|
+          t.insert(k + 1, '.') if a[k] == 1
+        end
+        #puts "#{t}@#{origem_domain} #{a.join}" unless ema.include?(t)
+        puts ":#{t}@#{origem_domain}" unless ema.include?(t)
+      end
+    end
   end
 
   class CollectGifts
@@ -1354,12 +1458,16 @@ Thread.abort_on_exception = true
 #TankiOnline::Images::_load_subimages "vk", ["gift_cry"]
 #TankiOnline::Images._find_subimages nil, (TankiOnline::Images::SUBIMAGES[:char])
 #TankiOnline::Images::_combine_statuses
+#TankiOnline::Game.new.email 'logins_reg'
 
 #zzzzz
 #sleep ( 2 * 60 - 15 ) * 60
 #t = TankiOnline::CollectGifts.new :server_num => 12, :server_locale => 'ru', :win_resize => [1024 + 16, 768], :max_browsers => 1, :empty_screenshot => false, :collect_mode => :vk_add
 #t = TankiOnline::CollectGifts.new :server_num => 40, :server_locale => 'en', :win_resize => [1024 + 16, 768], :max_browsers => 3, :empty_screenshot => false
-t = TankiOnline::CollectGifts.new :server_num => 3, :server_locale => 'en', :server_target => 'EN', :win_resize => [1024 + 16, 768], :max_browsers => 1, :empty_screenshot => false
+t = TankiOnline::CollectGifts.new :win_resize => [1024 + 16, 768], :max_browsers => 1, :empty_screenshot => false
+#t = TankiOnline::CollectGifts.new :win_resize => [1024 + 16, 768], :max_browsers => 1, :empty_screenshot => false, :collect_mode => :email_add
+#t = TankiOnline::CollectGifts.new :win_resize => [1024 + 16, 768], :max_browsers => 1, :empty_screenshot => false, :collect_mode => :game_reg
+#t = TankiOnline::CollectGifts.new :win_resize => [1024 + 16, 768], :max_browsers => 1, :empty_screenshot => false, :collect_mode => :game_enter
 #t = TankiOnline::CollectGifts.new :server_num => 3, :server_locale => 'ru', :win_resize => [1024 + 16, 768], :max_browsers => 1, :empty_screenshot => false
 #t = TankiOnline::CollectGifts.new :server_num => 10, :server_locale => 'en', :win_resize => [1024 + 16, 768], :max_browsers => 1, :empty_screenshot => false, :collect_mode => :reg, :ref_id => 'FASLPW7G4wuCP0EMI16PG5aQ5ycMmYZqV5l0CS59R5prh9JLcdqcrf5XczAS0xfy'
 #t = TankiOnline::CollectGifts.new :server_num => 10, :server_locale => 'en', :win_resize => [1024 + 16, 768], :max_browsers => 1, :empty_screenshot => false, :collect_mode => :forum_login
